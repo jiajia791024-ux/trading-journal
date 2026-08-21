@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>台指交易日誌</title>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --bg:#0d0f14;
@@ -116,7 +117,7 @@
 <header>
   <div class="headrow">
     <h1>📓 台指交易日誌</h1>
-    <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v1.3</span></div>
+    <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v1.4</span></div>
   </div>
   <nav id="tabs"></nav>
 </header>
@@ -138,7 +139,9 @@ const defaultState = () => ({
   checklistLog: [],
   trades: [],
   stockAccounts: ['我','媽媽','爸爸','婆婆','老公','語安','語樂'],
-  stockTrades: []
+  stockTrades: [],
+  stockCapital: {},
+  stockCashLedger: []
 });
 let state = loadLocal();
 let activeTab = 'data';
@@ -793,6 +796,7 @@ function saveTrade(){
 /* ---------------- 股票紀錄 tab ---------------- */
 let editingStockId = null;
 let stockAccountFilter = '全部';
+let stockMonthFilter = '';
 function stockProfit(t){
   if(t.exitPrice===null || t.exitPrice===undefined || t.exitPrice==='') return null;
   const qty = t.exitQty || t.entryQty || 0;
@@ -800,10 +804,23 @@ function stockProfit(t){
   const fees = (t.entryFee||0) + (t.exitFee||0);
   return gross - fees;
 }
+function stockAccountBalance(account){
+  const initial = state.stockCapital[account] || 0;
+  const ledgerNet = state.stockCashLedger.filter(l=>l.account===account)
+    .reduce((s,l)=> s + (['存入','借入'].includes(l.type) ? l.amount : -l.amount), 0);
+  const trades = state.stockTrades.filter(t=>t.account===account);
+  const spent = trades.reduce((s,t)=> s + (t.entryPrice*t.entryQty + (t.entryFee||0)), 0);
+  const returned = trades.filter(t=>stockProfit(t)!==null)
+    .reduce((s,t)=> s + (t.exitPrice*t.exitQty - (t.exitFee||0)), 0);
+  return initial + ledgerNet - spent + returned;
+}
 function renderStock(){
   const accounts = state.stockAccounts;
   const all = state.stockTrades;
-  const filtered = stockAccountFilter==='全部' ? all : all.filter(t=>t.account===stockAccountFilter);
+  let filtered = stockAccountFilter==='全部' ? all : all.filter(t=>t.account===stockAccountFilter);
+  if(stockMonthFilter){
+    filtered = filtered.filter(t=> (t.entryDate||'').startsWith(stockMonthFilter));
+  }
   const closed = filtered.filter(t=>stockProfit(t)!==null);
   const open = filtered.filter(t=>stockProfit(t)===null);
   const totalProfit = closed.reduce((s,t)=>s+stockProfit(t),0);
@@ -818,12 +835,19 @@ function renderStock(){
 
   const list = [...filtered].sort((a,b)=> (b.entryDate||'').localeCompare(a.entryDate||''));
 
+  const capAccount = stockAccountFilter!=='全部' ? stockAccountFilter : accounts[0];
+  const ledgerList = state.stockCashLedger.filter(l=>l.account===capAccount).sort((a,b)=>b.date.localeCompare(a.date));
+
   return `
   <div class="card">
     <h2>總覽（股票，與期貨分開計算）</h2>
     <div class="btnrow" style="margin-bottom:10px;">
       <div class="chip ${stockAccountFilter==='全部'?'gold-on':''}" onclick="setStockFilter('全部')">全部</div>
       ${accounts.map(a=>`<div class="chip ${stockAccountFilter===a?'gold-on':''}" onclick="setStockFilter('${a}')">${a}</div>`).join('')}
+    </div>
+    <div class="grid2" style="margin-bottom:10px;align-items:end;">
+      <div class="field" style="margin-bottom:0;"><label>篩選月份</label><input type="month" id="st_month" value="${stockMonthFilter}" onchange="setStockMonth(this.value)"></div>
+      <button class="ghost-btn" onclick="setStockMonth('')">清除月份篩選</button>
     </div>
     <div style="font-family:var(--mono);font-size:24px;font-weight:700;color:${totalProfit>=0?'var(--red)':'var(--green)'};">
       ${totalProfit>=0?'+':''}${Math.round(totalProfit).toLocaleString()} 元
@@ -833,6 +857,41 @@ function renderStock(){
       <div class="stat"><div class="n">${open.length}</div><div class="l">持有中</div></div>
       <div class="stat"><div class="n">${winRate}%</div><div class="l">勝率</div></div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>💰 資金管理${capAccount?`（${capAccount}）`:''}</h2>
+    <div class="hint">選「全部」時會用第一個帳戶顯示，切到特定帳戶就會看那個人的資金。買進會自動扣款、賣出會自動加回，起始資金跟增補/領出的錢要自己記錄。</div>
+    <div style="font-family:var(--mono);font-size:22px;font-weight:700;margin:10px 0;">
+      目前餘額：${capAccount? Math.round(stockAccountBalance(capAccount)).toLocaleString() : 0} 元
+    </div>
+    <div class="grid2">
+      <div class="field"><label>起始資金</label><input type="number" id="cap_amount" value="${capAccount? (state.stockCapital[capAccount]||0) : 0}"></div>
+      <button class="ghost-btn" style="align-self:end;" onclick="saveStockCapital('${capAccount}')">儲存起始資金</button>
+    </div>
+    <h2 style="margin-top:14px;">新增資金異動</h2>
+    <div class="field"><label>類型</label>
+      <div class="btnrow">
+        <div class="chip gold-on" data-f="ledger_type" data-v="存入" onclick="pick(this)">存入</div>
+        <div class="chip" data-f="ledger_type" data-v="提出" onclick="pick(this)">提出</div>
+        <div class="chip" data-f="ledger_type" data-v="借入" onclick="pick(this)">借入（股票借貸）</div>
+        <div class="chip" data-f="ledger_type" data-v="還款" onclick="pick(this)">還款</div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>日期</label><input type="date" id="ledger_date" value="${todayStr()}"></div>
+      <div class="field"><label>金額</label><input type="number" id="ledger_amount"></div>
+    </div>
+    <div class="field"><label>備註</label><input type="text" id="ledger_note" placeholder="例：轉入自銀行帳戶"></div>
+    <button class="ghost-btn" onclick="addLedger('${capAccount}')">新增紀錄</button>
+    ${ledgerList.length? ledgerList.map(l=>`
+      <div class="entry" style="margin-top:8px;">
+        <div class="entry-top"><span>${l.date} · ${l.type}</span>
+          <span style="font-family:var(--mono);color:${['存入','借入'].includes(l.type)?'var(--green)':'var(--red)'}">${['存入','借入'].includes(l.type)?'+':'-'}${Math.round(l.amount).toLocaleString()}</span>
+        </div>
+        ${l.note?`<div class="entry-note">${escapeHtml(l.note)}</div>`:''}
+        <div class="entry-actions"><span class="del-x" onclick="delItem('stockCashLedger','${l.id}', this)">刪除 ✕</span></div>
+      </div>`).join('') : '<div class="empty">尚無異動紀錄</div>'}
   </div>
 
   <div class="card">
@@ -900,6 +959,25 @@ function renderStock(){
   </div>`;
 }
 function setStockFilter(a){ stockAccountFilter = a; render(); }
+function setStockMonth(v){ stockMonthFilter = v; render(); }
+function saveStockCapital(account){
+  if(!account) return;
+  const v = num(document.getElementById('cap_amount').value) || 0;
+  state.stockCapital[account] = v;
+  markDirty(); toast('已儲存起始資金');
+}
+function addLedger(account){
+  if(!account){ toast('請先選擇帳戶'); return; }
+  const type = document.querySelector('[data-f="ledger_type"].gold-on')?.dataset.v || '存入';
+  const amount = num(document.getElementById('ledger_amount').value);
+  if(amount===null){ toast('請輸入金額'); return; }
+  state.stockCashLedger.push({
+    id:uid(), account, type,
+    date: document.getElementById('ledger_date').value,
+    amount, note: document.getElementById('ledger_note').value
+  });
+  markDirty(); toast('已新增資金異動');
+}
 function addStockAccount(){
   const v = document.getElementById('st_newaccount').value.trim();
   if(!v) return;
@@ -976,6 +1054,7 @@ function renderSettings(){
   <div class="card">
     <h2>資料備份</h2>
     <div class="btnrow">
+      <button class="ghost-btn" onclick="exportExcel()">📊 匯出 Excel 報表</button>
       <button class="ghost-btn" onclick="exportJson()">匯出 JSON</button>
       <button class="ghost-btn danger-btn" onclick="clearAll()">清空所有資料</button>
     </div>
@@ -999,6 +1078,44 @@ function saveFeeSettings(){
   state.settings.taxRate = num(document.getElementById('g_tax').value) || 0;
   state.settings.multiplier = num(document.getElementById('g_mult').value) || 10;
   markDirty(); toast('費用設定已儲存');
+}
+function exportExcel(){
+  if(typeof XLSX === 'undefined'){ toast('Excel 元件載入失敗，請檢查網路連線'); return; }
+  const wb = XLSX.utils.book_new();
+
+  const futuresRows = state.trades.map(t=>({
+    日期:t.date, 盤別:t.session, 方向:t.direction, 順逆勢:t.trend, 上一盤狀態:t.prevState,
+    進場點位:(t.entries||[]).map(e=>e.price).join(','), 進場口數:(t.entries||[]).map(e=>e.qty).join(','),
+    出場點位:(t.exits||[]).map(e=>e.price).join(','), 出場口數:(t.exits||[]).map(e=>e.qty).join(','),
+    毛利點數:Math.round(tradePoints(t)), 手續費稅金:Math.round(tradeCost(t)), 淨損益:Math.round(tradeNetAmount(t)),
+    備註:t.note
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(futuresRows), '期貨紀錄');
+
+  const stockRows = state.stockTrades.map(t=>({
+    帳戶:t.account, 代號:t.code, 名稱:t.name, 方向:t.direction,
+    進場日期:t.entryDate, 進場價格:t.entryPrice, 進場股數:t.entryQty, 進場手續費:t.entryFee,
+    出場日期:t.exitDate, 出場價格:t.exitPrice, 出場股數:t.exitQty, 出場手續費:t.exitFee,
+    損益:stockProfit(t)===null?'持有中':Math.round(stockProfit(t)), 備註:t.note
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(stockRows), '股票紀錄');
+
+  const ledgerRows = state.stockCashLedger.map(l=>({ 帳戶:l.account, 日期:l.date, 類型:l.type, 金額:l.amount, 備註:l.note }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ledgerRows), '股票資金異動');
+
+  const dataRows = state.marketData.map(d=>({
+    日期:d.date, 盤別:d.session, 正逆價差:d.spread, 矛盾累積:d.contra, VIX:d.vix, 外資淨口數:d.foreign, 收盤:d.close, 振幅:d.range
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dataRows), '市場數據');
+
+  const planRows = state.plans.map(p=>({
+    日期:p.date, 盤別:p.session, 操作方向:(p.directions||[]).join('、'), 前盤形態:p.pattern,
+    壓力目標:p.resist, 支撐目標:p.support, 備註:p.note
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(planRows), '盤前規劃');
+
+  XLSX.writeFile(wb, `交易日誌_${todayStr()}.xlsx`);
+  toast('已匯出 Excel');
 }
 function exportJson(){
   const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
