@@ -58,6 +58,7 @@
     width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;
     color:var(--text);padding:9px 10px;font-size:14px;font-family:inherit;
   }
+  input::placeholder,textarea::placeholder{ color:#4a4f5c; font-style:italic; }
   input[type=number]{font-family:var(--mono);}
   textarea{resize:vertical;min-height:60px;}
   .field{margin-bottom:10px;}
@@ -117,7 +118,7 @@
 <header>
   <div class="headrow">
     <h1>📓 台指交易日誌</h1>
-    <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v1.6</span></div>
+    <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v1.8</span></div>
   </div>
   <nav id="tabs"></nav>
 </header>
@@ -137,7 +138,7 @@ const LS_KEY = 'tj_state_v1';
 const defaultState = () => ({
   meta:{ sha:null, updatedAt:null },
   settings:{ token:'', owner:'', repo:'', path:'data.json', branch:'main',
-             feePerSide:23, taxRate:0.00002, multiplier:10 },
+             feePerSide:23, taxRate:0.00002, multiplier:10, geminiKey:'' },
   marketData: [],
   sentiment: [],
   plans: [],
@@ -436,6 +437,14 @@ function renderPlan(){
     <button class="ghost-btn" onclick="analyzeImage()">OCR 分析並帶入</button>
     <div id="aiPreview"></div>
   </div>
+
+  <div class="card">
+    <h2>🧠 AI 深度分析（Gemini）</h2>
+    <div class="hint">上傳同一類截圖，這次不是抓數字，而是請 AI 真的讀懂內容、做出「已確認事實／推論／反推論驗證／焦點事件／族群判斷／結論」這種完整分析報告，格式跟你平常看的分析文一樣。需要先在「設定」填入免費的 Gemini API Key。</div>
+    <div class="field" style="margin-top:10px;"><input type="file" id="gm_file" accept="image/*" multiple></div>
+    <button class="ghost-btn" onclick="deepAnalyze()">AI 深度分析</button>
+    <div id="gmPreview"></div>
+  </div>
   <div class="card">
     <h2>歷史規劃</h2>
     ${list.length? list.map(p=>`
@@ -583,6 +592,105 @@ function confirmAiDraft(box){
   box.remove();
   markDirty();
   toast('分析結果已儲存');
+}
+
+/* ---------------- AI 深度分析（Gemini）---------------- */
+const DEEP_ANALYSIS_PROMPT = `你是一位專業的台股/台指期貨盤前分析師。請仔細閱讀這張截圖裡的所有數據與文字內容（可能包含：夜盤期貨行情、ADR、四大美股指數、外資與自營商期貨籌碼、選擇權籌碼等），然後產出一份完整的繁體中文盤前分析報告，格式和風格必須完全比照下面這個範本的結構（標題、分節、符號都要），但內容要根據圖片裡實際的數字與變化來寫，不可以照抄範本的數字：
+
+⚠️ [時間] [早盤/夜盤]重大更新：[一句話總結今天最重要的市場現象]
+
+一、已確認事實
+（條列圖片中出現的具體數字與現象，例如美股表現、ADR、期貨夜盤點位、籌碼變化等）
+
+二、推論
+（用「因果鏈」的方式寫出你從這些事實推導出的邏輯，可以分成多條因果鏈，例如宏觀因素鏈、類股表現鏈）
+
+三、反推論驗證
+正面反證：（列出支持「不那麼悲觀/樂觀」的證據）
+負面反證：（列出反對前述推論、或值得警惕的證據）
+
+四、焦點事件預告（如果圖片或你的知識中有提到近期重要財經事件、財報、會議，列出來；沒有就寫「無明顯排定事件」）
+
+五、重點族群與個股判斷
+（針對圖片中提到的類股或個股，各給一個 🟢中性偏多／🟡中性偏守／🔴偏空防禦 的判斷，並附一句理由）
+
+六、今日結論
+美股整體：（🟢/🟡/🔴 + 一句話）
+[相關族群]：（🟢/🟡/🔴 + 一句話）
+今日台股預期：（🟢/🟡/🔴 + 一句話）
+
+最後附上「整體[偏多/偏空]可信度：約 XX%」以及一項次要判斷的可信度百分比。
+
+只輸出這份報告本身，不要加任何額外的開場白或說明。`;
+
+async function deepAnalyze(){
+  const key = state.settings.geminiKey;
+  if(!key){ toast('請先到「設定」填入 Gemini API Key'); return; }
+  const fileInput = document.getElementById('gm_file');
+  const files = [...fileInput.files];
+  if(!files.length){ toast('請先選擇圖片'); return; }
+  const preview = document.getElementById('gmPreview');
+  preview.innerHTML = '';
+  const status = document.createElement('div');
+  status.className = 'hint';
+  status.style.marginTop = '10px';
+  status.textContent = `AI 分析中…（共 ${files.length} 張，請稍候）`;
+  preview.appendChild(status);
+
+  for(let i=0;i<files.length;i++){
+    const file = files[i];
+    status.textContent = `AI 分析中…（第 ${i+1}/${files.length} 張）`;
+    try{
+      const dataUrl = await fileToBase64(file);
+      const base64 = dataUrl.split(',')[1];
+      const mediaType = file.type || 'image/jpeg';
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({
+          contents:[{ parts:[
+            { text: DEEP_ANALYSIS_PROMPT },
+            { inline_data:{ mime_type: mediaType, data: base64 } }
+          ]}]
+        })
+      });
+      if(!res.ok){
+        const errBody = await res.text();
+        throw new Error('API 錯誤 '+res.status+'：'+errBody.slice(0,200));
+      }
+      const json = await res.json();
+      const text = json.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('') || '（沒有取得內容，請重試）';
+      renderDeepPreview(text, i);
+    }catch(e){
+      console.error(e);
+      const errBox = document.createElement('div');
+      errBox.className = 'hint';
+      errBox.style.color = 'var(--red)';
+      errBox.textContent = `第 ${i+1} 張分析失敗：${e.message}`;
+      preview.appendChild(errBox);
+    }
+  }
+  status.textContent = `分析完成（共 ${files.length} 張），確認內容後可儲存為市場情緒筆記`;
+}
+function renderDeepPreview(text, idx){
+  const preview = document.getElementById('gmPreview');
+  const box = document.createElement('div');
+  box.className = 'entry';
+  box.style.marginTop = '12px';
+  box.innerHTML = `
+    <div class="entry-top"><span>AI 深度分析 #${idx+1}（可修改後再儲存）</span></div>
+    <div class="field"><label>日期</label><input type="date" class="gm_date" value="${todayStr()}"></div>
+    <div class="field"><label>分析內容</label><textarea class="gm_text" style="min-height:260px;">${escapeHtml(text)}</textarea></div>
+    <button class="primary-btn gm_confirm">儲存為市場情緒筆記</button>`;
+  box.querySelector('.gm_confirm').onclick = ()=>{
+    const date = box.querySelector('.gm_date').value || todayStr();
+    const note = box.querySelector('.gm_text').value;
+    state.sentiment.push({ id:uid(), date, note });
+    box.remove();
+    markDirty();
+    toast('已儲存到市場情緒');
+  };
+  preview.appendChild(box);
 }
 
 /* ---------------- 交易前確認 tab ---------------- */
@@ -1049,6 +1157,12 @@ function renderSettings(){
     </div>
   </div>
   <div class="card">
+    <h2>🧠 AI 深度分析設定（Gemini，免費）</h2>
+    <div class="hint">到 <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> 用 Google 帳號登入，點「Create API key」即可免費取得，不需綁信用卡。免費額度有每分鐘/每日的請求數限制，個人使用通常足夠。Key 只存在這台裝置本機。</div>
+    <div class="field" style="margin-top:10px;"><label>Gemini API Key</label><input type="text" id="g_gemini" value="${s.geminiKey||''}" placeholder="AIzaSy..."></div>
+    <button class="ghost-btn" onclick="saveGeminiKey()">儲存 Gemini Key</button>
+  </div>
+  <div class="card">
     <h2>手續費 / 稅金設定</h2>
     <div class="hint">用來自動算出每筆交易扣掉成本後的淨損益。微型台指每點 10 元；小型台指每點 50 元；台指期每點 200 元。期交稅預設十萬分之2（0.00002），可依實際費率調整。</div>
     <div class="grid3" style="margin-top:12px;">
@@ -1110,6 +1224,11 @@ async function saveSettings(){
     console.error(e);
     setSyncStatus('err', '檢查失敗：'+e.message);
   }
+}
+function saveGeminiKey(){
+  state.settings.geminiKey = document.getElementById('g_gemini').value.trim();
+  saveLocal();
+  toast('Gemini Key 已儲存');
 }
 function saveFeeSettings(){
   state.settings.feePerSide = num(document.getElementById('g_fee').value) || 0;
