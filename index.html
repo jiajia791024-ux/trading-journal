@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>台指交易日誌</title>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
@@ -118,7 +117,7 @@
 <header>
   <div class="headrow">
     <h1>📓 台指交易日誌</h1>
-    <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v1.8</span></div>
+    <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v1.9</span></div>
   </div>
   <nav id="tabs"></nav>
 </header>
@@ -138,7 +137,7 @@ const LS_KEY = 'tj_state_v1';
 const defaultState = () => ({
   meta:{ sha:null, updatedAt:null },
   settings:{ token:'', owner:'', repo:'', path:'data.json', branch:'main',
-             feePerSide:23, taxRate:0.00002, multiplier:10, geminiKey:'' },
+             feePerSide:23, taxRate:0.00002, multiplier:10, geminiKey:'', theme:'gold' },
   marketData: [],
   sentiment: [],
   plans: [],
@@ -431,14 +430,6 @@ function renderPlan(){
   </div>
 
   <div class="card">
-    <h2>📷 圖片分析（盤後截圖自動帶入）</h2>
-    <div class="hint">上傳早盤或午盤的盤後分析截圖，會用瀏覽器內建的免費 OCR 讀出畫面上的數字（VIX、外資淨口數、正逆價差、壓力/支撐目標等），整理成草稿讓你確認後再儲存。OCR 讀不出按鈕的「選取狀態」，所以操作方向/前盤形態記得自己點一下。全部在手機本機處理，不會把圖片傳到外部，永久免費。</div>
-    <div class="field" style="margin-top:10px;"><input type="file" id="ai_file" accept="image/*" multiple></div>
-    <button class="ghost-btn" onclick="analyzeImage()">OCR 分析並帶入</button>
-    <div id="aiPreview"></div>
-  </div>
-
-  <div class="card">
     <h2>🧠 AI 深度分析（Gemini）</h2>
     <div class="hint">上傳同一類截圖，這次不是抓數字，而是請 AI 真的讀懂內容、做出「已確認事實／推論／反推論驗證／焦點事件／族群判斷／結論」這種完整分析報告，格式跟你平常看的分析文一樣。需要先在「設定」填入免費的 Gemini API Key。</div>
     <div class="field" style="margin-top:10px;"><input type="file" id="gm_file" accept="image/*" multiple></div>
@@ -476,122 +467,6 @@ function fileToBase64(file){
     r.onerror = reject;
     r.readAsDataURL(file);
   });
-}
-function grabNum(text, ...labels){
-  for(const label of labels){
-    const re = new RegExp(label + '[^0-9\\-+]{0,6}([\\-+]?[0-9][0-9,]*\\.?[0-9]*)');
-    const m = text.match(re);
-    if(m) return Number(m[1].replace(/,/g,''));
-  }
-  return null;
-}
-async function analyzeImage(){
-  const fileInput = document.getElementById('ai_file');
-  const files = [...fileInput.files];
-  if(!files.length){ toast('請先選擇圖片'); return; }
-  const preview = document.getElementById('aiPreview');
-  preview.innerHTML = '';
-  const status = document.createElement('div');
-  status.className = 'hint';
-  status.style.marginTop = '10px';
-  status.textContent = `OCR 辨識中…第一次使用需要下載語言包，會慢一點（共 ${files.length} 張）`;
-  preview.appendChild(status);
-
-  if(typeof Tesseract === 'undefined'){
-    status.style.color = 'var(--red)';
-    status.textContent = 'OCR 元件載入失敗，請檢查網路連線後重新整理頁面再試一次';
-    return;
-  }
-
-  for(let i=0;i<files.length;i++){
-    const file = files[i];
-    status.textContent = `OCR 辨識中…（第 ${i+1}/${files.length} 張）`;
-    try{
-      const dataUrl = await fileToBase64(file);
-      const { data:{ text } } = await Tesseract.recognize(dataUrl, 'chi_tra+eng');
-      const d = {
-        date: null, session: null,
-        spread: grabNum(text, '正逆價差'),
-        contra: grabNum(text, '矛盾累積'),
-        vix: grabNum(text, 'VIX'),
-        foreign: grabNum(text, '外資淨口數'),
-        close: grabNum(text, '收盤'),
-        range: grabNum(text, '振幅'),
-        resist: grabNum(text, '壓力目標', '壓力'),
-        support: grabNum(text, '支撐目標', '支撐'),
-        directions: [],
-        pattern: null,
-        note: text.trim().slice(0, 500)
-      };
-      if(/早盤/.test(text)) d.session = '早盤';
-      else if(/午盤/.test(text)) d.session = '午盤';
-      renderAiPreview(d, i);
-    }catch(e){
-      console.error(e);
-      const errBox = document.createElement('div');
-      errBox.className = 'hint';
-      errBox.style.color = 'var(--red)';
-      errBox.textContent = `第 ${i+1} 張辨識失敗：${e.message}`;
-      preview.appendChild(errBox);
-    }
-  }
-  status.textContent = `OCR 完成（共 ${files.length} 張），請逐一核對數字後儲存`;
-}
-function renderAiPreview(d, idx){
-  const preview = document.getElementById('aiPreview');
-  const box = document.createElement('div');
-  box.className = 'entry';
-  box.style.marginTop = '12px';
-  box.innerHTML = `
-      <div class="entry-top"><span>AI 分析草稿 #${idx+1}（可修改後再儲存）</span></div>
-      <div class="grid2">
-        <div class="field"><label>日期</label><input type="date" class="ai_date" value="${d.date||todayStr()}"></div>
-        <div class="field"><label>盤別</label><input type="text" class="ai_session" value="${d.session||''}"></div>
-      </div>
-      <div class="grid2">
-        <div class="field"><label>正逆價差</label><input type="number" class="ai_spread" value="${d.spread??''}"></div>
-        <div class="field"><label>矛盾累積</label><input type="number" class="ai_contra" value="${d.contra??''}"></div>
-      </div>
-      <div class="grid2">
-        <div class="field"><label>VIX</label><input type="number" step="0.01" class="ai_vix" value="${d.vix??''}"></div>
-        <div class="field"><label>外資淨口數</label><input type="number" class="ai_foreign" value="${d.foreign??''}"></div>
-      </div>
-      <div class="grid2">
-        <div class="field"><label>收盤</label><input type="number" class="ai_close" value="${d.close??''}"></div>
-        <div class="field"><label>振幅</label><input type="number" class="ai_range" value="${d.range??''}"></div>
-      </div>
-      <div class="field"><label>操作方向（逗號分隔）</label><input type="text" class="ai_dirs" value="${(d.directions||[]).join(',')}"></div>
-      <div class="field"><label>前盤形態</label><input type="text" class="ai_pattern" value="${d.pattern||''}"></div>
-      <div class="grid2">
-        <div class="field"><label>壓力目標</label><input type="number" class="ai_resist" value="${d.resist??''}"></div>
-        <div class="field"><label>支撐目標</label><input type="number" class="ai_support" value="${d.support??''}"></div>
-      </div>
-      <div class="field"><label>備註摘要</label><textarea class="ai_note">${escapeHtml(d.note||'')}</textarea></div>
-      <button class="primary-btn ai_confirm">確認並儲存這筆分析</button>`;
-  box.querySelector('.ai_confirm').onclick = ()=>confirmAiDraft(box);
-  preview.appendChild(box);
-}
-function confirmAiDraft(box){
-  const g=cls=>box.querySelector('.'+cls).value;
-  const date = g('ai_date') || todayStr();
-  const session = g('ai_session') || '早盤';
-  const hasData = ['ai_spread','ai_contra','ai_vix','ai_foreign','ai_close','ai_range'].some(id=>g(id)!=='');
-  if(hasData){
-    state.marketData.push({
-      id:uid(), date, session,
-      spread:num(g('ai_spread')), contra:num(g('ai_contra')), vix:num(g('ai_vix')),
-      foreign:num(g('ai_foreign')), close:num(g('ai_close')), range:num(g('ai_range'))
-    });
-  }
-  const directions = g('ai_dirs').split(',').map(s=>s.trim()).filter(Boolean);
-  const pattern = g('ai_pattern');
-  const resist = num(g('ai_resist')), support = num(g('ai_support')), note = g('ai_note');
-  if(directions.length || pattern || resist!==null || support!==null || note){
-    state.plans.push({ id:uid(), date, session, directions, pattern, resist, support, note });
-  }
-  box.remove();
-  markDirty();
-  toast('分析結果已儲存');
 }
 
 /* ---------------- AI 深度分析（Gemini）---------------- */
@@ -644,7 +519,7 @@ async function deepAnalyze(){
       const dataUrl = await fileToBase64(file);
       const base64 = dataUrl.split(',')[1];
       const mediaType = file.type || 'image/jpeg';
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`, {
         method:'POST',
         headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({
@@ -1139,6 +1014,16 @@ function renderSettings(){
   const s = state.settings;
   return `
   <div class="card">
+    <h2>🎨 版面顏色</h2>
+    <div class="hint">選一個喜歡的主題色，馬上套用（這是裝置本機的顯示偏好，不會跟其他裝置同步）。</div>
+    <div class="btnrow" style="margin-top:10px;">
+      ${Object.entries(THEMES).map(([key,t])=>`
+        <div class="chip ${s.theme===key?'gold-on':''}" onclick="setTheme('${key}')" style="border-color:${t.gold};${s.theme===key?`background:${t.dim};color:${t.gold};`:''}">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${t.gold};margin-right:6px;"></span>${t.name}
+        </div>`).join('')}
+    </div>
+  </div>
+  <div class="card">
     <h2>GitHub 雲端同步</h2>
     <div class="hint">建議建立一個「私有」repo 專門存放資料檔（例如 trading-data），並用只限該 repo 權限的 Fine-grained token。App 本身可以放在另一個公開 repo 上用 GitHub Pages 開啟。</div>
     <div class="field" style="margin-top:12px;"><label>Personal Access Token</label><input type="text" id="g_token" value="${s.token}" placeholder="github_pat_xxx"></div>
@@ -1335,9 +1220,29 @@ function delItem(coll, id, el){
 function escapeHtml(s){
   return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+/* ---------------- 主題色 ---------------- */
+const THEMES = {
+  gold:   { name:'金色（預設）', gold:'#d4a53d', dim:'#3a3220' },
+  blue:   { name:'藍色',         gold:'#4a90d9', dim:'#1c2b3a' },
+  green:  { name:'綠色',         gold:'#3fae6a', dim:'#173325' },
+  purple: { name:'紫色',         gold:'#9b6fd1', dim:'#2a2038' },
+  red:    { name:'紅色',         gold:'#d1595f', dim:'#3a2020' },
+  teal:   { name:'青色',         gold:'#3fb8b0', dim:'#173432' },
+};
+function applyTheme(key){
+  const t = THEMES[key] || THEMES.gold;
+  document.documentElement.style.setProperty('--gold', t.gold);
+  document.documentElement.style.setProperty('--gold-dim', t.dim);
+}
+function setTheme(key){
+  state.settings.theme = key;
+  applyTheme(key);
+  markDirty();
+}
 function bindTabEvents(){}
 
 /* ---------------- init ---------------- */
+applyTheme(state.settings.theme);
 render();
 if(ghConfigured()) pullFromGithub(true);
 </script>
