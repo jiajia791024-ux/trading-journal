@@ -117,7 +117,7 @@
 <header>
   <div class="headrow">
     <h1>📓 台指交易日誌</h1>
-    <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v1.4</span></div>
+    <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v1.5</span></div>
   </div>
   <nav id="tabs"></nav>
 </header>
@@ -1060,7 +1060,17 @@ function renderSettings(){
     </div>
   </div>`;
 }
-function saveSettings(){
+function hasLocalData(){
+  return (state.trades.length + state.stockTrades.length + state.marketData.length +
+          state.plans.length + state.sentiment.length + state.checklistLog.length +
+          state.stockCashLedger.length) > 0;
+}
+function remoteHasData(remoteData){
+  if(!remoteData) return false;
+  const c = k => (remoteData[k]||[]).length;
+  return (c('trades')+c('stockTrades')+c('marketData')+c('plans')+c('sentiment')+c('checklistLog')+c('stockCashLedger')) > 0;
+}
+async function saveSettings(){
   state.settings = {
     ...state.settings,
     token: document.getElementById('g_token').value.trim(),
@@ -1071,7 +1081,28 @@ function saveSettings(){
   };
   saveLocal();
   toast('設定已儲存');
-  pullFromGithub(true);
+
+  if(!ghConfigured()) return;
+  setSyncStatus('busy', '檢查雲端資料中…');
+  try{
+    const remote = await ghGet();
+    const remoteFull = remote && remoteHasData(remote.data);
+    const localFull = hasLocalData();
+    if(remoteFull){
+      // 雲端已經有資料：以雲端為準（多裝置情境，雲端是最新的共同資料）
+      await pullFromGithub(true);
+    } else if(localFull){
+      // 雲端是空的，但這台裝置本機有資料：把本機資料推上去，不要被空資料蓋掉
+      state.meta.sha = remote ? remote.sha : null;
+      await pushToGithub();
+      toast('已把本機資料上傳到雲端');
+    } else {
+      setSyncStatus('', '雲端尚無資料');
+    }
+  }catch(e){
+    console.error(e);
+    setSyncStatus('err', '檢查失敗：'+e.message);
+  }
 }
 function saveFeeSettings(){
   state.settings.feePerSide = num(document.getElementById('g_fee').value) || 0;
