@@ -77,9 +77,9 @@
     padding:8px 14px;border-radius:20px;border:1px solid var(--line);background:transparent;
     color:var(--sub);font-size:13px;cursor:pointer;user-select:none;
   }
-  .chip.gold-on{border-color:var(--gold);color:var(--gold);background:var(--gold-dim);}
-  .chip.red-on{border-color:var(--red);color:var(--red);background:var(--red-dim);}
-  .chip.green-on{border-color:var(--green);color:var(--green);background:var(--green-dim);}
+  .chip.gold-on{border-color:var(--gold);color:var(--gold);background:color-mix(in srgb, var(--gold) 18%, transparent);}
+  .chip.red-on{border-color:var(--red);color:var(--red);background:color-mix(in srgb, var(--red) 18%, transparent);}
+  .chip.green-on{border-color:var(--green);color:var(--green);background:color-mix(in srgb, var(--green) 18%, transparent);}
   .primary-btn{
     background:var(--gold);color:#1a1400;border:none;border-radius:8px;padding:11px 16px;
     font-size:14px;font-weight:600;cursor:pointer;width:100%;
@@ -99,7 +99,7 @@
   .up{color:var(--red);} .down{color:var(--green);}
   .entry{background:var(--card2);border-radius:10px;padding:12px;margin-bottom:8px;}
   .entry-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--sub);margin-bottom:6px;}
-  .entry-note{font-size:13px;line-height:1.5;color:#c8cad4;white-space:pre-wrap;}
+  .entry-note{font-size:13px;line-height:1.5;color:var(--text);opacity:.85;white-space:pre-wrap;}
   .entry-actions{display:flex;gap:8px;margin-top:8px;}
   .empty{color:var(--sub);font-size:13px;text-align:center;padding:20px 0;}
   .checklist-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);}
@@ -118,7 +118,7 @@
   .toast.show{opacity:1;}
   .subtabs{display:flex;gap:6px;margin-bottom:12px;}
   .subtab{padding:6px 12px;border-radius:8px;font-size:12px;background:var(--card2);color:var(--sub);cursor:pointer;}
-  .subtab.on{background:var(--gold-dim);color:var(--gold);}
+  .subtab.on{background:color-mix(in srgb, var(--gold) 18%, transparent);color:var(--gold);}
   .hint{font-size:11px;color:var(--sub);margin-top:4px;line-height:1.5;}
   a{color:var(--cyan);}
 </style>
@@ -127,8 +127,11 @@
 
 <header>
   <div class="headrow">
-    <h1>📓 台指交易日誌</h1>
-    <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.0</span></div>
+    <h1 id="appTitle">📓 台指交易日誌</h1>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.2</span></div>
+      <span id="settingsGear" style="cursor:pointer;font-size:18px;" onclick="openSettings()">⚙</span>
+    </div>
   </div>
   <nav id="tabs"></nav>
 </header>
@@ -148,7 +151,8 @@ const LS_KEY = 'tj_state_v1';
 const defaultState = () => ({
   meta:{ sha:null, updatedAt:null },
   settings:{ token:'', owner:'', repo:'', path:'data.json', branch:'main',
-             feePerSide:23, taxRate:0.00002, multiplier:10, geminiKey:'', theme:'gold', mode:'dark' },
+             feePerSide:15, taxPerSide:9, multiplier:10, geminiKey:'', theme:'gold', mode:'dark', appTitle:'台指交易日誌',
+             marginInit:0, marginMaintain:0, futuresGoal:0 },
   marketData: [],
   sentiment: [],
   plans: [],
@@ -158,7 +162,11 @@ const defaultState = () => ({
   stockAccounts: ['我','媽媽','爸爸','婆婆','老公','語安','語樂'],
   stockTrades: [],
   stockCapital: {},
-  stockCashLedger: []
+  stockCashLedger: [],
+  dividendHoldings: [],
+  dividendRecords: [],
+  dividendGoal: 10000,
+  futuresBalanceLog: []
 });
 let state = loadLocal();
 let activeTab = 'data';
@@ -293,13 +301,18 @@ const TABS = [
   {id:'confirm', label:'交易前確認'},
   {id:'log', label:'期貨紀錄'},
   {id:'stock', label:'股票紀錄'},
-  {id:'settings', label:'⚙ 設定'},
+  {id:'cash', label:'💰資金管理'},
+  {id:'dividend', label:'📈存股目標'},
 ];
+function openSettings(){ activeTab = 'settings'; render(); }
 
 function render(){
   const nav = document.getElementById('tabs');
   nav.innerHTML = TABS.map(t=>`<div class="tab ${t.id===activeTab?'active':''}" data-tab="${t.id}">${t.label}</div>`).join('');
   nav.querySelectorAll('.tab').forEach(el=>el.onclick=()=>{ activeTab = el.dataset.tab; render(); });
+
+  const titleEl = document.getElementById('appTitle');
+  if(titleEl) titleEl.textContent = '📓 ' + (state.settings.appTitle || '台指交易日誌');
 
   const main = document.getElementById('main');
   if(activeTab==='data') main.innerHTML = renderData();
@@ -308,6 +321,8 @@ function render(){
   else if(activeTab==='confirm') main.innerHTML = renderConfirm();
   else if(activeTab==='log') main.innerHTML = renderLog();
   else if(activeTab==='stock') main.innerHTML = renderStock();
+  else if(activeTab==='cash') main.innerHTML = renderCash();
+  else if(activeTab==='dividend') main.innerHTML = renderDividend();
   else if(activeTab==='settings') main.innerHTML = renderSettings();
   bindTabEvents();
 }
@@ -384,18 +399,24 @@ function saveMarketData(){
 function num(v){ return v===''?null:Number(v); }
 
 /* ---------------- 市場情緒 tab ---------------- */
+let editingSentimentId = null;
 function renderSentiment(){
   const list=[...state.sentiment].sort((a,b)=>b.date.localeCompare(a.date));
+  const editing = editingSentimentId ? state.sentiment.find(s=>s.id===editingSentimentId) : null;
+  const ev = editing || { date: todayStr(), note: '' };
   return `
   <div class="card">
-    <h2>新增情緒筆記</h2>
-    <div class="field"><label>日期</label><input type="date" id="s_date" value="${todayStr()}"></div>
+    <h2>${editing?'編輯情緒筆記':'新增情緒筆記'}</h2>
+    <div class="field"><label>日期</label><input type="date" id="s_date" value="${ev.date}"></div>
     <div class="field"><label>觀察 / 判斷</label>
       ${noteToolbar('s_note')}
-      <textarea id="s_note" placeholder="例：外資轉為淨多、VIX下滑，市場情緒轉穩…"></textarea>
+      <textarea id="s_note" placeholder="例：外資轉為淨多、VIX下滑，市場情緒轉穩…">${escapeHtml(ev.note)}</textarea>
       <div class="hint">選取文字後點上面按鈕套用格式，也可以自己打：**粗體**、{{red:紅字}}、{{green:綠字}}、{{gold:黃字}}、{{blue:藍字}}、{{big:放大}}</div>
     </div>
-    <button class="primary-btn" onclick="saveSentiment()">儲存筆記</button>
+    <div class="btnrow">
+      <button class="primary-btn" style="flex:1;" onclick="saveSentiment()">${editing?'更新筆記':'儲存筆記'}</button>
+      ${editing?`<button class="ghost-btn" onclick="cancelEditSentiment()">取消</button>`:''}
+    </div>
   </div>
   <div class="card">
     <h2>歷史筆記</h2>
@@ -403,14 +424,31 @@ function renderSentiment(){
       <div class="entry">
         <div class="entry-top"><span>${s.date}</span><span class="del-x" onclick="delItem('sentiment','${s.id}', this)">✕</span></div>
         <div class="entry-note">${renderNoteText(s.note)}</div>
+        <div class="entry-actions"><span class="ghost-btn" style="cursor:pointer;" onclick="editSentiment('${s.id}')">編輯</span></div>
       </div>`).join('') : '<div class="empty">尚無筆記</div>'}
   </div>`;
 }
 function saveSentiment(){
   const note = document.getElementById('s_note').value.trim();
   if(!note){ toast('請輸入內容'); return; }
-  state.sentiment.push({id:uid(), date:document.getElementById('s_date').value, note});
-  markDirty(); toast('已儲存');
+  const date = document.getElementById('s_date').value;
+  if(editingSentimentId){
+    const idx = state.sentiment.findIndex(s=>s.id===editingSentimentId);
+    if(idx>-1) state.sentiment[idx] = {...state.sentiment[idx], date, note};
+    editingSentimentId = null;
+    markDirty(); toast('已更新筆記');
+  } else {
+    state.sentiment.push({id:uid(), date, note});
+    markDirty(); toast('已儲存');
+  }
+}
+function editSentiment(id){
+  editingSentimentId = id;
+  render();
+}
+function cancelEditSentiment(){
+  editingSentimentId = null;
+  render();
 }
 
 /* ---------------- 盤前記錄 tab ---------------- */
@@ -647,14 +685,12 @@ function tradePoints(t){
 }
 function tradeCost(t){
   const s = state.settings;
-  const mult = s.multiplier||10, feeSide = s.feePerSide||0, taxRate = s.taxRate||0;
+  const feeSide = s.feePerSide||0, taxSide = s.taxPerSide||0;
   const entryQty = (t.entries||[]).reduce((sum,e)=>sum+(e.qty||0),0);
   const exitQty = (t.exits||[]).reduce((sum,e)=>sum+(e.qty||0),0);
   const qty = Math.min(entryQty, exitQty) || 0;
-  const entryVal = (t.entries||[]).reduce((sum,e)=>sum+(e.price*e.qty||0),0); // 點數*口數
-  const exitVal = (t.exits||[]).reduce((sum,e)=>sum+(e.price*e.qty||0),0);
   const fee = feeSide * qty * 2; // 進+出兩邊手續費
-  const tax = (entryVal + exitVal) * mult * taxRate; // 名目金額(點數*每點金額)*稅率，進出各一次
+  const tax = taxSide * qty * 2; // 進+出兩邊交易稅（固定金額）
   return fee + tax;
 }
 function tradeNetAmount(t){
@@ -663,11 +699,58 @@ function tradeNetAmount(t){
 }
 let editingTradeId = null;
 
+let futuresMonthFilter = '';
+function isTradeOpen(t){
+  return !((t.exits||[]).reduce((s,e)=>s+(e.qty||0),0) > 0);
+}
+function monthlyBreakdown(trades, profitFn, dateField){
+  const map = {};
+  trades.forEach(t=>{
+    const d = t[dateField];
+    if(!d) return;
+    const p = profitFn(t);
+    if(p===null) return;
+    const ym = d.slice(0,7);
+    map[ym] = (map[ym]||0) + p;
+  });
+  return Object.entries(map).sort((a,b)=>b[0].localeCompare(a[0]));
+}
+function yearlyBreakdown(trades, profitFn, dateField){
+  const map = {};
+  trades.forEach(t=>{
+    const d = t[dateField];
+    if(!d) return;
+    const p = profitFn(t);
+    if(p===null) return;
+    const y = d.slice(0,4);
+    map[y] = (map[y]||0) + p;
+  });
+  return Object.entries(map).sort((a,b)=>b[0].localeCompare(a[0]));
+}
+function breakdownCard(title, trades, profitFn, dateField){
+  const months = monthlyBreakdown(trades, profitFn, dateField).slice(0,12);
+  const years = yearlyBreakdown(trades, profitFn, dateField);
+  return `
+  <div class="card">
+    <h2>📅 ${title}</h2>
+    <div class="subtabs">
+      <div class="subtab on" onclick="this.parentElement.querySelectorAll('.subtab').forEach(e=>e.classList.remove('on'));this.classList.add('on');this.parentElement.nextElementSibling.style.display='block';this.parentElement.nextElementSibling.nextElementSibling.style.display='none';">按月</div>
+      <div class="subtab" onclick="this.parentElement.querySelectorAll('.subtab').forEach(e=>e.classList.remove('on'));this.classList.add('on');this.parentElement.nextElementSibling.style.display='none';this.parentElement.nextElementSibling.nextElementSibling.style.display='block';">按年</div>
+    </div>
+    <div>
+      ${months.length? months.map(([ym,v])=>`<div class="kv"><span>${ym}</span><span class="v" style="color:${v>=0?'var(--red)':'var(--green)'}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</span></div>`).join('') : '<div class="empty">尚無資料</div>'}
+    </div>
+    <div style="display:none;">
+      ${years.length? years.map(([y,v])=>`<div class="kv"><span>${y}</span><span class="v" style="color:${v>=0?'var(--red)':'var(--green)'}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</span></div>`).join('') : '<div class="empty">尚無資料</div>'}
+    </div>
+  </div>`;
+}
 function renderLog(){
   const list=[...state.trades].sort((a,b)=>b.date.localeCompare(a.date)||b.session.localeCompare(a.session));
-  const now = new Date();
-  const ym = now.toISOString().slice(0,7);
-  const monthTrades = state.trades.filter(t=>t.date.startsWith(ym));
+  const ym = futuresMonthFilter || new Date().toISOString().slice(0,7);
+  const monthTradesAll = futuresMonthFilter==='__all__' ? state.trades : state.trades.filter(t=>t.date.startsWith(ym));
+  const openCount = monthTradesAll.filter(isTradeOpen).length;
+  const monthTrades = monthTradesAll.filter(t=>!isTradeOpen(t));
   const pts = monthTrades.reduce((s,t)=>s+tradePoints(t),0);
   const netAmt = monthTrades.reduce((s,t)=>s+tradeNetAmount(t),0);
   const costAmt = monthTrades.reduce((s,t)=>s+tradeCost(t),0);
@@ -683,9 +766,24 @@ function renderLog(){
     entries:[{price:'',qty:1}], exits:[{price:'',qty:1}], note:'' };
   const chip=(field,val,cur,onClass)=> `<div class="chip ${cur===val?onClass:''}" data-f="${field}" data-v="${val}" onclick="pick(this)">${val}</div>`;
 
+  const goal = state.settings.futuresGoal||0;
+  const goalPct = goal>0? Math.max(0,Math.min(999,(netAmt/goal*100))) : 0;
+  const openQty = state.trades.filter(isTradeOpen).reduce((s,t)=>s+(t.entries||[]).reduce((a,e)=>a+(e.qty||0),0),0);
+  const marginInit = state.settings.marginInit||0;
+  const balLog = [...state.futuresBalanceLog].sort((a,b)=>b.date.localeCompare(a.date));
+  const todayBal = balLog[0]? balLog[0].balance : null;
+  const yestBal = balLog[1]? balLog[1].balance : null;
+  const requiredMargin = openQty * marginInit;
+  const riskIndex = (todayBal!==null && requiredMargin>0) ? (todayBal/requiredMargin*100) : null;
+  const riskColor = riskIndex===null? 'var(--sub)' : riskIndex>=150? 'var(--red)' : riskIndex>=100? 'var(--gold)' : 'var(--green)';
+
   return `
   <div class="card">
-    <h2>本月績效（${ym}）</h2>
+    <h2>績效統計${futuresMonthFilter==='__all__'?'（全部）':`（${ym}）`}</h2>
+    <div class="grid2" style="margin-bottom:10px;align-items:end;">
+      <div class="field" style="margin-bottom:0;"><label>篩選月份</label><input type="month" value="${futuresMonthFilter==='__all__'?'':ym}" onchange="setFuturesMonth(this.value)"></div>
+      <button class="ghost-btn" onclick="setFuturesMonth('__all__')">看全部</button>
+    </div>
     <div style="font-family:var(--mono);font-size:26px;font-weight:700;color:${pts>=0?'var(--red)':'var(--green)'};margin-bottom:2px;">
       ${pts>=0?'+':''}${Math.round(pts)} 點（毛）
     </div>
@@ -699,6 +797,30 @@ function renderLog(){
     </div>
     <div class="kv" style="margin-top:10px;"><span>勝率（淨損益）</span><span class="v">${winRate}%</span></div>
     <div class="kv"><span>順勢率</span><span class="v">${trendRate}%</span></div>
+    ${openCount? `<div class="kv"><span>持倉中（不計入上面統計）</span><span class="v">${openCount} 筆</span></div>`:''}
+  </div>
+
+  <div class="card">
+    <h2>🎯 目標與風險</h2>
+    ${goal>0? `
+    <div class="kv"><span>本月目標達成度</span><span class="v">${Math.round(goalPct)}%（目標 ${goal.toLocaleString()} 元）</span></div>
+    ` : `<div class="hint">到「⚙ 設定」填「本月獲利目標」可以看達成度。</div>`}
+    <div class="kv"><span>目前持倉口數</span><span class="v">${openQty} 口</span></div>
+    ${marginInit>0? `
+    <div class="kv"><span>所需原始保證金</span><span class="v">${requiredMargin.toLocaleString()} 元</span></div>
+    <div class="kv"><span>風險指標</span><span class="v" style="color:${riskColor}">${riskIndex===null?'—（請先記錄今日餘額）':Math.round(riskIndex)+'%'}</span></div>
+    <div class="hint">風險指標 ≥150% 較安全、100~150% 留意、<100% 有被追繳風險（用最新一筆「今日餘額」計算）。</div>
+    ` : `<div class="hint">到「⚙ 設定」填「原始保證金」可以看風險指標。</div>`}
+    <h2 style="margin-top:14px;">每日餘額</h2>
+    <div class="grid2">
+      <div class="field"><label>日期</label><input type="date" id="fb_date" value="${todayStr()}"></div>
+      <div class="field"><label>帳戶餘額</label><input type="number" id="fb_balance"></div>
+    </div>
+    <button class="ghost-btn" onclick="addFuturesBalance()">記錄今日餘額</button>
+    ${todayBal!==null?`<div class="kv" style="margin-top:10px;"><span>今日 ${balLog[0].date}</span><span class="v">${todayBal.toLocaleString()}</span></div>`:''}
+    ${yestBal!==null?`<div class="kv"><span>上一筆 ${balLog[1].date}</span><span class="v">${yestBal.toLocaleString()}</span></div>
+    <div class="kv"><span>變化</span><span class="v" style="color:${(todayBal-yestBal)>=0?'var(--red)':'var(--green)'}">${(todayBal-yestBal)>=0?'+':''}${(todayBal-yestBal).toLocaleString()}</span></div>`:''}
+    ${balLog.length>2? `<div class="hint" style="margin-top:8px;">歷史紀錄：</div>${balLog.slice(2,10).map(b=>`<div class="kv"><span>${b.date}</span><span class="v">${b.balance.toLocaleString()} <span class="del-x" style="margin-left:8px;" onclick="delFuturesBalance('${b.id}')">✕</span></span></div>`).join('')}`:''}
   </div>
 
   <div class="card">
@@ -708,7 +830,7 @@ function renderLog(){
       <div class="field"><label>盤別</label>
         <div class="btnrow">
           ${chip('t_session','早盤',ev.session,'gold-on')}
-          ${chip('t_session','午盤',ev.session,'gold-on')}
+          ${chip('t_session','夜盤',ev.session,'gold-on')}
         </div>
       </div>
     </div>
@@ -734,7 +856,7 @@ function renderLog(){
       <div class="field"><label>進場口數</label><input type="number" id="t_eqty" value="${(ev.entries&&ev.entries[0]&&ev.entries[0].qty)||1}"></div>
     </div>
     <div class="grid2">
-      <div class="field"><label>出場點位</label><input type="number" id="t_xin" value="${(ev.exits&&ev.exits[0]&&ev.exits[0].price!==''&&ev.exits[0].price!==undefined)?ev.exits[0].price:''}" placeholder="44239"></div>
+      <div class="field"><label>出場點位（尚未出場可留空＝持倉中）</label><input type="number" id="t_xin" value="${(ev.exits&&ev.exits[0]&&ev.exits[0].price!==''&&ev.exits[0].price!==undefined)?ev.exits[0].price:''}" placeholder="44239"></div>
       <div class="field"><label>出場口數</label><input type="number" id="t_xqty" value="${(ev.exits&&ev.exits[0]&&ev.exits[0].qty)||1}"></div>
     </div>
     <div class="field"><label>備註</label>${noteToolbar('t_note')}<textarea id="t_note" placeholder="這筆的想法、盤中變化…">${escapeHtml(ev.note||'')}</textarea></div>
@@ -744,9 +866,12 @@ function renderLog(){
     </div>
   </div>
 
+  ${breakdownCard('每月/每年損益（期貨）', state.trades.filter(t=>!isTradeOpen(t)), tradeNetAmount, 'date')}
+
   <div class="card">
     <h2>交易紀錄</h2>
     ${list.length? list.map(t=>{
+      const open = isTradeOpen(t);
       const p = tradePoints(t);
       const net = tradeNetAmount(t);
       const cost = tradeCost(t);
@@ -754,11 +879,13 @@ function renderLog(){
       <div class="entry">
         <div class="entry-top">
           <span>${t.date} · ${t.session} <span class="pill ${t.direction==='多'?'long':'short'}">${t.direction}</span> ${t.trend?`<span class="pill">${t.trend}</span>`:''}</span>
-          <span style="color:${p>0?'var(--red)':p<0?'var(--green)':'var(--sub)'};font-family:var(--mono);font-weight:700;">${p>=0?'+':''}${Math.round(p)}點</span>
+          ${open? `<span style="color:var(--sub);font-family:var(--mono);font-weight:700;">持倉中</span>` :
+            `<span style="color:${p>0?'var(--red)':p<0?'var(--green)':'var(--sub)'};font-family:var(--mono);font-weight:700;">${p>=0?'+':''}${Math.round(p)}點</span>`}
         </div>
-        <div class="kv"><span>進 / 出</span><span class="v">${(t.entries||[]).map(e=>e.price).join(',')} → ${(t.exits||[]).map(e=>e.price).join(',')}</span></div>
+        <div class="kv"><span>進 / 出</span><span class="v">${(t.entries||[]).map(e=>e.price).join(',')} → ${open?'—':(t.exits||[]).map(e=>e.price).join(',')}</span></div>
+        ${!open? `
         <div class="kv"><span>手續費+稅</span><span class="v">${Math.round(cost).toLocaleString()} 元</span></div>
-        <div class="kv"><span>淨損益</span><span class="v" style="color:${net>0?'var(--red)':net<0?'var(--green)':'var(--sub)'}">${net>=0?'+':''}${Math.round(net).toLocaleString()} 元</span></div>
+        <div class="kv"><span>淨損益</span><span class="v" style="color:${net>0?'var(--red)':net<0?'var(--green)':'var(--sub)'}">${net>=0?'+':''}${Math.round(net).toLocaleString()} 元</span></div>` : ''}
         ${t.note?`<div class="entry-note" style="margin-top:6px;">${renderNoteText(t.note)}</div>`:''}
         <div class="entry-actions">
           <span class="ghost-btn" style="cursor:pointer;" onclick="editTrade('${t.id}')">編輯</span>
@@ -778,6 +905,10 @@ function cancelEditTrade(){
   editingTradeId = null;
   render();
 }
+function setFuturesMonth(v){
+  futuresMonthFilter = v || new Date().toISOString().slice(0,7);
+  render();
+}
 function saveTrade(){
   const g=id=>document.getElementById(id).value;
   const session = document.querySelector('[data-f="t_session"].gold-on')?.dataset.v || '早盤';
@@ -785,10 +916,11 @@ function saveTrade(){
   const trend = document.querySelector('[data-f="t_trend"].gold-on')?.dataset.v || '';
   const prev = document.querySelector('[data-f="t_prev"].gold-on')?.dataset.v || '';
   const ein=num(g('t_ein')), eqty=num(g('t_eqty')), xin=num(g('t_xin')), xqty=num(g('t_xqty'));
-  if(ein===null || xin===null){ toast('請輸入進出場點位'); return; }
+  if(ein===null){ toast('請輸入進場點位'); return; }
   const record = {
     date:g('t_date'), session, direction, trend, prevState:prev,
-    entries:[{price:ein, qty:eqty||1}], exits:[{price:xin, qty:xqty||1}],
+    entries:[{price:ein, qty:eqty||1}],
+    exits: xin===null ? [] : [{price:xin, qty:xqty||1}],
     note:g('t_note')
   };
   if(editingTradeId){
@@ -802,10 +934,96 @@ function saveTrade(){
   }
 }
 
+/* ---------------- 資金管理 tab ---------------- */
+let cashAccountFilter = null;
+function renderCash(){
+  const accounts = state.stockAccounts;
+  const capAccount = cashAccountFilter || accounts[0];
+  const cashHistory = buildCashHistory(capAccount);
+  return `
+  <div class="card">
+    <h2>💰 資金管理</h2>
+    <div class="hint">跟「股票紀錄」的買賣資料是連動的——每一筆買進賣出都會自動反映在這裡的餘額和流水帳上，不用重複輸入。</div>
+    <div class="btnrow" style="margin-top:10px;">
+      ${accounts.map(a=>`<div class="chip ${capAccount===a?'gold-on':''}" onclick="setCashAccount('${a}')">${a}</div>`).join('')}
+    </div>
+  </div>
+  <div class="card">
+    <h2>${capAccount} 的資金</h2>
+    <div style="font-family:var(--mono);font-size:22px;font-weight:700;margin:10px 0;">
+      目前餘額：${Math.round(stockAccountBalance(capAccount)).toLocaleString()} 元
+    </div>
+    <div class="grid2">
+      <div class="field"><label>起始資金</label><input type="number" id="cap_amount" value="${state.stockCapital[capAccount]||0}"></div>
+      <button class="ghost-btn" style="align-self:end;" onclick="saveStockCapital('${capAccount}')">儲存起始資金</button>
+    </div>
+    <h2 style="margin-top:14px;">新增資金異動</h2>
+    <div class="field"><label>類型</label>
+      <div class="btnrow">
+        <div class="chip gold-on" data-f="ledger_type" data-v="存入" onclick="pick(this)">存入</div>
+        <div class="chip" data-f="ledger_type" data-v="提出" onclick="pick(this)">提出</div>
+        <div class="chip" data-f="ledger_type" data-v="借入" onclick="pick(this)">借入（股票借貸）</div>
+        <div class="chip" data-f="ledger_type" data-v="還款" onclick="pick(this)">還款</div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>日期</label><input type="date" id="ledger_date" value="${todayStr()}"></div>
+      <div class="field"><label>金額</label><input type="number" id="ledger_amount"></div>
+    </div>
+    <div class="field"><label>備註</label><input type="text" id="ledger_note" placeholder="例：轉入自銀行帳戶"></div>
+    <button class="ghost-btn" onclick="addLedger('${capAccount}')">新增紀錄</button>
+  </div>
+  <div class="card">
+    <h2>流水帳（存摺）</h2>
+    ${cashHistory.length? cashHistory.map(r=>`
+      <div class="entry" style="margin-top:6px;padding:10px 12px;">
+        <div class="entry-top" style="margin-bottom:0;">
+          <span>${r.date==='0000-00-00'?'—':r.date} · ${r.desc}</span>
+          <span style="font-family:var(--mono);color:${r.kind==='in'?'var(--red)':'var(--green)'}">${r.amount>=0?'+':''}${Math.round(r.amount).toLocaleString()}</span>
+        </div>
+        <div class="kv" style="border-bottom:none;padding-top:2px;"><span>餘額</span><span class="v">${Math.round(r.balance).toLocaleString()}</span></div>
+      </div>`).join('') : '<div class="empty">尚無任何資金紀錄</div>'}
+    <div class="hint" style="margin-top:10px;">上面流水帳裡的買賣紀錄要刪除，請到「股票紀錄」分頁刪除該筆交易；這裡只能刪除手動輸入的存入/提出/借入/還款：</div>
+    ${state.stockCashLedger.filter(l=>l.account===capAccount).length? state.stockCashLedger.filter(l=>l.account===capAccount).sort((a,b)=>b.date.localeCompare(a.date)).map(l=>`
+      <div class="entry" style="margin-top:6px;">
+        <div class="entry-top"><span>${l.date} · ${l.type}${l.note?'：'+escapeHtml(l.note):''}</span></div>
+        <div class="entry-actions"><span class="del-x" onclick="delItem('stockCashLedger','${l.id}', this)">刪除 ✕</span></div>
+      </div>`).join('') : ''}
+  </div>`;
+}
+function setCashAccount(a){ cashAccountFilter = a; render(); }
+
 /* ---------------- 股票紀錄 tab ---------------- */
 let editingStockId = null;
+let addLotTargetId = null;
+function toggleAddLot(id){
+  addLotTargetId = (addLotTargetId===id) ? null : id;
+  render();
+}
+function confirmAddLot(id){
+  const trade = state.stockTrades.find(t=>t.id===id);
+  if(!trade) return;
+  const date = document.getElementById('al_date').value || todayStr();
+  const price = num(document.getElementById('al_price').value);
+  const qty = num(document.getElementById('al_qty').value);
+  const fee = num(document.getElementById('al_fee').value) || 0;
+  if(price===null || qty===null){ toast('請輸入價格與股數'); return; }
+  if(!trade.entryLots || !trade.entryLots.length){
+    trade.entryLots = [{date:trade.entryDate, price:trade.entryPrice, qty:trade.entryQty, fee:trade.entryFee||0}];
+  }
+  trade.entryLots.push({date, price, qty, fee});
+  const totalQty = trade.entryLots.reduce((s,l)=>s+l.qty,0);
+  const totalCost = trade.entryLots.reduce((s,l)=>s+l.price*l.qty,0);
+  trade.entryQty = totalQty;
+  trade.entryPrice = totalCost/totalQty;
+  trade.entryFee = trade.entryLots.reduce((s,l)=>s+(l.fee||0),0);
+  addLotTargetId = null;
+  markDirty();
+  toast('已加碼，均價已更新為 '+trade.entryPrice.toFixed(2));
+}
 let stockAccountFilter = '全部';
 let stockMonthFilter = '';
+let stockStatusFilter = 'all';
 function stockProfit(t){
   if(t.exitPrice===null || t.exitPrice===undefined || t.exitPrice==='') return null;
   const qty = t.exitQty || t.entryQty || 0;
@@ -823,6 +1041,32 @@ function stockAccountBalance(account){
     .reduce((s,t)=> s + (t.exitPrice*t.exitQty - (t.exitFee||0)), 0);
   return initial + ledgerNet - spent + returned;
 }
+function buildCashHistory(account){
+  const rows = [];
+  const initial = state.stockCapital[account] || 0;
+  if(initial){
+    rows.push({ date:'0000-00-00', sortKey:'0000-00-00 0', desc:'起始資金', amount:initial, kind:'in' });
+  }
+  state.stockCashLedger.filter(l=>l.account===account).forEach(l=>{
+    const isIn = ['存入','借入'].includes(l.type);
+    rows.push({ date:l.date, sortKey:l.date+' 1', desc:l.type+(l.note?'：'+l.note:''), amount: isIn? l.amount : -l.amount, kind:isIn?'in':'out' });
+  });
+  state.stockTrades.filter(t=>t.account===account).forEach(t=>{
+    rows.push({ date:t.entryDate, sortKey:t.entryDate+' 2',
+      desc:`買進 ${t.code}${t.name?' '+t.name:''} ${t.entryQty}股 @${t.entryPrice}`,
+      amount: -(t.entryPrice*t.entryQty + (t.entryFee||0)), kind:'out' });
+    if(stockProfit(t)!==null){
+      const p = stockProfit(t);
+      rows.push({ date:t.exitDate, sortKey:t.exitDate+' 3',
+        desc:`賣出 ${t.code}${t.name?' '+t.name:''} ${t.exitQty}股 @${t.exitPrice}（損益 ${p>=0?'+':''}${Math.round(p).toLocaleString()}）`,
+        amount: t.exitPrice*t.exitQty - (t.exitFee||0), kind:'in' });
+    }
+  });
+  rows.sort((a,b)=>a.sortKey.localeCompare(b.sortKey));
+  let running = 0;
+  rows.forEach(r=>{ running += r.amount; r.balance = running; });
+  return rows.reverse();
+}
 function renderStock(){
   const accounts = state.stockAccounts;
   const all = state.stockTrades;
@@ -830,11 +1074,13 @@ function renderStock(){
   if(stockMonthFilter){
     filtered = filtered.filter(t=> (t.entryDate||'').startsWith(stockMonthFilter));
   }
+  if(stockStatusFilter==='holding') filtered = filtered.filter(t=>stockProfit(t)===null);
+  else if(stockStatusFilter==='sold') filtered = filtered.filter(t=>stockProfit(t)!==null);
   const closed = filtered.filter(t=>stockProfit(t)!==null);
   const open = filtered.filter(t=>stockProfit(t)===null);
   const totalProfit = closed.reduce((s,t)=>s+stockProfit(t),0);
-  const winCount = closed.filter(t=>stockProfit(t)>0).length;
-  const winRate = closed.length? Math.round(winCount/closed.length*100):0;
+  const totalCost = closed.reduce((s,t)=>s+(t.entryPrice*t.entryQty),0);
+  const returnRate = totalCost? (totalProfit/totalCost*100) : 0;
 
   const editing = editingStockId ? state.stockTrades.find(t=>t.id===editingStockId) : null;
   const ev = editing || { account:accounts[0]||'我', code:'', name:'', direction:'多',
@@ -843,9 +1089,6 @@ function renderStock(){
   const chip=(field,val,cur,onClass)=> `<div class="chip ${cur===val?onClass:''}" data-f="${field}" data-v="${val}" onclick="pick(this)">${val}</div>`;
 
   const list = [...filtered].sort((a,b)=> (b.entryDate||'').localeCompare(a.entryDate||''));
-
-  const capAccount = stockAccountFilter!=='全部' ? stockAccountFilter : accounts[0];
-  const ledgerList = state.stockCashLedger.filter(l=>l.account===capAccount).sort((a,b)=>b.date.localeCompare(a.date));
 
   return `
   <div class="card">
@@ -864,43 +1107,8 @@ function renderStock(){
     <div class="grid3" style="margin-top:10px;">
       <div class="stat"><div class="n">${closed.length}</div><div class="l">已平倉</div></div>
       <div class="stat"><div class="n">${open.length}</div><div class="l">持有中</div></div>
-      <div class="stat"><div class="n">${winRate}%</div><div class="l">勝率</div></div>
+      <div class="stat"><div class="n" style="color:${returnRate>=0?'var(--red)':'var(--green)'}">${returnRate>=0?'+':''}${returnRate.toFixed(2)}%</div><div class="l">報酬率</div></div>
     </div>
-  </div>
-
-  <div class="card">
-    <h2>💰 資金管理${capAccount?`（${capAccount}）`:''}</h2>
-    <div class="hint">選「全部」時會用第一個帳戶顯示，切到特定帳戶就會看那個人的資金。買進會自動扣款、賣出會自動加回，起始資金跟增補/領出的錢要自己記錄。</div>
-    <div style="font-family:var(--mono);font-size:22px;font-weight:700;margin:10px 0;">
-      目前餘額：${capAccount? Math.round(stockAccountBalance(capAccount)).toLocaleString() : 0} 元
-    </div>
-    <div class="grid2">
-      <div class="field"><label>起始資金</label><input type="number" id="cap_amount" value="${capAccount? (state.stockCapital[capAccount]||0) : 0}"></div>
-      <button class="ghost-btn" style="align-self:end;" onclick="saveStockCapital('${capAccount}')">儲存起始資金</button>
-    </div>
-    <h2 style="margin-top:14px;">新增資金異動</h2>
-    <div class="field"><label>類型</label>
-      <div class="btnrow">
-        <div class="chip gold-on" data-f="ledger_type" data-v="存入" onclick="pick(this)">存入</div>
-        <div class="chip" data-f="ledger_type" data-v="提出" onclick="pick(this)">提出</div>
-        <div class="chip" data-f="ledger_type" data-v="借入" onclick="pick(this)">借入（股票借貸）</div>
-        <div class="chip" data-f="ledger_type" data-v="還款" onclick="pick(this)">還款</div>
-      </div>
-    </div>
-    <div class="grid2">
-      <div class="field"><label>日期</label><input type="date" id="ledger_date" value="${todayStr()}"></div>
-      <div class="field"><label>金額</label><input type="number" id="ledger_amount"></div>
-    </div>
-    <div class="field"><label>備註</label><input type="text" id="ledger_note" placeholder="例：轉入自銀行帳戶"></div>
-    <button class="ghost-btn" onclick="addLedger('${capAccount}')">新增紀錄</button>
-    ${ledgerList.length? ledgerList.map(l=>`
-      <div class="entry" style="margin-top:8px;">
-        <div class="entry-top"><span>${l.date} · ${l.type}</span>
-          <span style="font-family:var(--mono);color:${['存入','借入'].includes(l.type)?'var(--green)':'var(--red)'}">${['存入','借入'].includes(l.type)?'+':'-'}${Math.round(l.amount).toLocaleString()}</span>
-        </div>
-        ${l.note?`<div class="entry-note">${escapeHtml(l.note)}</div>`:''}
-        <div class="entry-actions"><span class="del-x" onclick="delItem('stockCashLedger','${l.id}', this)">刪除 ✕</span></div>
-      </div>`).join('') : '<div class="empty">尚無異動紀錄</div>'}
   </div>
 
   <div class="card">
@@ -943,10 +1151,18 @@ function renderStock(){
     </div>
   </div>
 
+  ${breakdownCard('每月/每年損益（股票）', filtered.filter(t=>stockProfit(t)!==null), stockProfit, 'exitDate')}
+
   <div class="card">
     <h2>股票交易列表${stockAccountFilter!=='全部'?`（${stockAccountFilter}）`:''}</h2>
+    <div class="btnrow" style="margin-bottom:10px;">
+      <div class="chip ${stockStatusFilter==='all'?'gold-on':''}" onclick="setStockStatus('all')">全部</div>
+      <div class="chip ${stockStatusFilter==='holding'?'gold-on':''}" onclick="setStockStatus('holding')">持有中</div>
+      <div class="chip ${stockStatusFilter==='sold'?'gold-on':''}" onclick="setStockStatus('sold')">已賣出</div>
+    </div>
     ${list.length? list.map(t=>{
       const p = stockProfit(t);
+      const isOpen = p===null;
       return `
       <div class="entry">
         <div class="entry-top">
@@ -955,19 +1171,33 @@ function renderStock(){
             ${p===null? '持有中' : (p>=0?'+':'')+Math.round(p).toLocaleString()+' 元'}
           </span>
         </div>
-        <div class="kv"><span>進場</span><span class="v">${t.entryDate||'—'} @ ${fmt(t.entryPrice)} × ${fmt(t.entryQty)}股</span></div>
+        <div class="kv"><span>進場（均價）</span><span class="v">${t.entryDate||'—'} @ ${fmt(t.entryPrice&&t.entryPrice.toFixed?t.entryPrice.toFixed(2):t.entryPrice)} × ${fmt(t.entryQty)}股</span></div>
+        ${t.entryLots && t.entryLots.length>1 ? `
+        <div class="hint" style="margin:4px 0;">分批買進紀錄：${t.entryLots.map(l=>`${l.date} @${l.price}×${l.qty}股`).join('；')}</div>` : ''}
         ${t.exitPrice? `<div class="kv"><span>出場</span><span class="v">${t.exitDate||'—'} @ ${fmt(t.exitPrice)} × ${fmt(t.exitQty)}股</span></div>` : ''}
         <div class="kv"><span>手續費(進/出)</span><span class="v">${fmt(t.entryFee)} / ${fmt(t.exitFee)}</span></div>
         ${t.note?`<div class="entry-note" style="margin-top:6px;">${renderNoteText(t.note)}</div>`:''}
         <div class="entry-actions">
+          ${isOpen? `<span class="ghost-btn" style="cursor:pointer;" onclick="toggleAddLot('${t.id}')">➕ 加碼買進</span>`:''}
           <span class="ghost-btn" style="cursor:pointer;" onclick="editStock('${t.id}')">編輯</span>
           <span class="del-x" onclick="delItem('stockTrades','${t.id}', this)">刪除 ✕</span>
         </div>
+        ${addLotTargetId===t.id? `
+        <div class="entry" style="margin-top:8px;background:var(--card);">
+          <div class="grid3">
+            <div class="field"><label>日期</label><input type="date" id="al_date" value="${todayStr()}"></div>
+            <div class="field"><label>價格</label><input type="number" step="0.01" id="al_price"></div>
+            <div class="field"><label>股數</label><input type="number" id="al_qty"></div>
+          </div>
+          <div class="field"><label>手續費</label><input type="number" id="al_fee"></div>
+          <button class="primary-btn" onclick="confirmAddLot('${t.id}')">確認加碼（自動算均價）</button>
+        </div>` : ''}
       </div>`;
     }).join('') : '<div class="empty">尚無股票交易</div>'}
   </div>`;
 }
 function setStockFilter(a){ stockAccountFilter = a; render(); }
+function setStockStatus(v){ stockStatusFilter = v; render(); }
 function setStockMonth(v){ stockMonthFilter = v; render(); }
 function saveStockCapital(account){
   if(!account) return;
@@ -1028,10 +1258,119 @@ function cancelEditStock(){
   render();
 }
 
+/* ---------------- 存股目標 tab ---------------- */
+function latestDividendPerShare(code){
+  const recs = state.dividendRecords.filter(r=>r.code===code).sort((a,b)=>b.year-a.year);
+  return recs.length? recs[0].perShare : 0;
+}
+function renderDividend(){
+  const holdings = state.dividendHoldings;
+  const totalAnnual = holdings.reduce((s,h)=> s + h.shares * latestDividendPerShare(h.code), 0);
+  const totalMonthly = totalAnnual / 12;
+  const goal = state.dividendGoal || 0;
+  const pct = goal? Math.min(100, Math.round(totalMonthly/goal*100)) : 0;
+  const gap = Math.max(0, goal - totalMonthly);
+
+  const recSorted = [...state.dividendRecords].sort((a,b)=> b.year-a.year || a.code.localeCompare(b.code));
+
+  return `
+  <div class="card">
+    <h2>🎯 配息目標</h2>
+    <div class="field"><label>每月目標配息（元）</label><input type="number" id="div_goal" value="${goal}"></div>
+    <button class="ghost-btn" onclick="saveDividendGoal()">儲存目標</button>
+    <div style="margin-top:16px;">
+      <div class="kv"><span>目前預估年配息</span><span class="v">${Math.round(totalAnnual).toLocaleString()} 元</span></div>
+      <div class="kv"><span>目前預估月配息</span><span class="v" style="color:var(--red);font-weight:700;">${Math.round(totalMonthly).toLocaleString()} 元</span></div>
+      <div class="kv"><span>距離目標還差</span><span class="v" style="color:${gap>0?'var(--green)':'var(--red)'}">${gap>0? Math.round(gap).toLocaleString()+' 元/月' : '已達成！'}</span></div>
+    </div>
+    <div style="background:var(--card2);border-radius:8px;height:16px;margin-top:10px;overflow:hidden;">
+      <div style="background:var(--gold);height:100%;width:${pct}%;transition:width .3s;"></div>
+    </div>
+    <div class="hint" style="text-align:center;margin-top:4px;">${pct}% 達成</div>
+  </div>
+
+  <div class="card">
+    <h2>持股清單</h2>
+    <div class="hint">記錄你目前持有的存股張數（0050、高股息 ETF 等），股利用下面「股利紀錄」登記，會自動抓最新一年配息率計算。</div>
+    <div class="grid3" style="margin-top:10px;">
+      <div class="field"><label>代號</label><input type="text" id="dh_code" placeholder="0050"></div>
+      <div class="field"><label>名稱（選填）</label><input type="text" id="dh_name" placeholder="元大台灣50"></div>
+      <div class="field"><label>股數</label><input type="number" id="dh_shares" placeholder="1000"></div>
+    </div>
+    <div class="field"><label>帳戶（選填）</label>
+      <div class="btnrow">${state.stockAccounts.map(a=>`<div class="chip" data-f="dh_account" data-v="${a}" onclick="pick(this)">${a}</div>`).join('')}</div>
+    </div>
+    <button class="primary-btn" onclick="addHolding()">新增/更新持股</button>
+    ${holdings.length? holdings.map(h=>{
+      const perShare = latestDividendPerShare(h.code);
+      const annual = h.shares * perShare;
+      return `
+      <div class="entry" style="margin-top:8px;">
+        <div class="entry-top">
+          <span>${h.code}${h.name?' '+h.name:''} ${h.account?`<span class="pill">${h.account}</span>`:''}</span>
+          <span style="font-family:var(--mono);">${h.shares.toLocaleString()} 股</span>
+        </div>
+        <div class="kv"><span>最新股利/股</span><span class="v">${perShare? perShare.toFixed(2) : '尚無紀錄'}</span></div>
+        <div class="kv"><span>預估年配息</span><span class="v" style="color:var(--red)">${Math.round(annual).toLocaleString()} 元</span></div>
+        <div class="entry-actions"><span class="del-x" onclick="delItem('dividendHoldings','${h.id}', this)">刪除 ✕</span></div>
+      </div>`;
+    }).join('') : '<div class="empty">尚無持股</div>'}
+  </div>
+
+  <div class="card">
+    <h2>股利紀錄</h2>
+    <div class="grid3">
+      <div class="field"><label>代號</label><input type="text" id="dr_code" placeholder="0050"></div>
+      <div class="field"><label>年度</label><input type="number" id="dr_year" value="${new Date().getFullYear()}"></div>
+      <div class="field"><label>每股股利</label><input type="number" step="0.01" id="dr_pershare" placeholder="3.2"></div>
+    </div>
+    <div class="field"><label>備註</label><input type="text" id="dr_note" placeholder="例：分兩次配發"></div>
+    <button class="ghost-btn" onclick="addDividendRecord()">新增股利紀錄</button>
+    ${recSorted.length? recSorted.map(r=>`
+      <div class="entry" style="margin-top:8px;">
+        <div class="entry-top"><span>${r.code} · ${r.year}年</span><span style="font-family:var(--mono);">${r.perShare} 元/股</span></div>
+        ${r.note?`<div class="entry-note">${escapeHtml(r.note)}</div>`:''}
+        <div class="entry-actions"><span class="del-x" onclick="delItem('dividendRecords','${r.id}', this)">刪除 ✕</span></div>
+      </div>`).join('') : '<div class="empty">尚無股利紀錄</div>'}
+  </div>`;
+}
+function saveDividendGoal(){
+  state.dividendGoal = num(document.getElementById('div_goal').value) || 0;
+  markDirty(); toast('目標已儲存');
+}
+function addHolding(){
+  const code = document.getElementById('dh_code').value.trim();
+  if(!code){ toast('請輸入代號'); return; }
+  const shares = num(document.getElementById('dh_shares').value) || 0;
+  const name = document.getElementById('dh_name').value.trim();
+  const account = document.querySelector('[data-f="dh_account"].gold-on')?.dataset.v || '';
+  const existing = state.dividendHoldings.find(h=>h.code===code && h.account===account);
+  if(existing){
+    existing.shares = shares; existing.name = name || existing.name;
+  } else {
+    state.dividendHoldings.push({ id:uid(), code, name, shares, account });
+  }
+  markDirty(); toast('已儲存持股');
+}
+function addDividendRecord(){
+  const code = document.getElementById('dr_code').value.trim();
+  if(!code){ toast('請輸入代號'); return; }
+  const year = num(document.getElementById('dr_year').value) || new Date().getFullYear();
+  const perShare = num(document.getElementById('dr_pershare').value);
+  if(perShare===null){ toast('請輸入每股股利'); return; }
+  state.dividendRecords.push({ id:uid(), code, year, perShare, note:document.getElementById('dr_note').value });
+  markDirty(); toast('已新增股利紀錄');
+}
+
 /* ---------------- 設定 tab ---------------- */
 function renderSettings(){
   const s = state.settings;
   return `
+  <div class="card">
+    <h2>📝 標題</h2>
+    <div class="field"><label>App 名稱</label><input type="text" id="g_apptitle" value="${s.appTitle||'台指交易日誌'}"></div>
+    <button class="ghost-btn" onclick="saveAppTitle()">儲存名稱</button>
+  </div>
   <div class="card">
     <h2>🎨 版面顏色</h2>
     <div class="hint">選一個喜歡的主題色，馬上套用（這是裝置本機的顯示偏好，不會跟其他裝置同步）。</div>
@@ -1044,7 +1383,7 @@ function renderSettings(){
     <div class="field" style="margin-top:10px;"><label>主題色</label>
     <div class="btnrow">
       ${Object.entries(THEMES).map(([key,t])=>`
-        <div class="chip ${s.theme===key?'gold-on':''}" onclick="setTheme('${key}')" style="border-color:${t.gold};${s.theme===key?`background:${t.dim};color:${t.gold};`:''}">
+        <div class="chip ${s.theme===key?'gold-on':''}" onclick="setTheme('${key}')" style="border-color:${t.gold};${s.theme===key?`background:color-mix(in srgb, ${t.gold} 18%, transparent);color:${t.gold};`:''}">
           <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${t.gold};margin-right:6px;"></span>${t.name}
         </div>`).join('')}
     </div>
@@ -1076,13 +1415,24 @@ function renderSettings(){
   </div>
   <div class="card">
     <h2>手續費 / 稅金設定</h2>
-    <div class="hint">用來自動算出每筆交易扣掉成本後的淨損益。微型台指每點 10 元；小型台指每點 50 元；台指期每點 200 元。期交稅預設十萬分之2（0.00002），可依實際費率調整。</div>
+    <div class="hint">直接填你來回一趟實際會扣的「單邊」金額就好，不用算比例。例如來回總共扣 30 元手續費、18 元交易稅，這裡就填單邊手續費 15、單邊交易稅 9（程式會自動 ×2 算進出兩邊）。</div>
     <div class="grid3" style="margin-top:12px;">
       <div class="field"><label>手續費(每口/單邊,元)</label><input type="number" id="g_fee" value="${s.feePerSide}"></div>
-      <div class="field"><label>期交稅率</label><input type="number" step="0.000001" id="g_tax" value="${s.taxRate}"></div>
+      <div class="field"><label>交易稅(每口/單邊,元)</label><input type="number" id="g_tax" value="${s.taxPerSide}"></div>
       <div class="field"><label>每點金額(元)</label><input type="number" id="g_mult" value="${s.multiplier}"></div>
     </div>
+    <div class="hint">每點金額：微型台指 10 元；小型台指 50 元；台指期 200 元。</div>
     <button class="ghost-btn" onclick="saveFeeSettings()">儲存費用設定</button>
+  </div>
+  <div class="card">
+    <h2>🎯 期貨保證金 / 目標</h2>
+    <div class="hint">用來在「期貨紀錄」算風險指標和目標達成度。原始/維持保證金請填「每口」的金額（可到期交所或你的券商查詢當月數字）。</div>
+    <div class="grid3" style="margin-top:10px;">
+      <div class="field"><label>原始保證金(每口)</label><input type="number" id="g_margin_init" value="${s.marginInit||0}"></div>
+      <div class="field"><label>維持保證金(每口)</label><input type="number" id="g_margin_maintain" value="${s.marginMaintain||0}"></div>
+      <div class="field"><label>本月獲利目標(元)</label><input type="number" id="g_futures_goal" value="${s.futuresGoal||0}"></div>
+    </div>
+    <button class="ghost-btn" onclick="saveMarginSettings()">儲存保證金/目標設定</button>
   </div>
   <div class="card">
     <h2>資料備份</h2>
@@ -1137,6 +1487,11 @@ async function saveSettings(){
     setSyncStatus('err', '檢查失敗：'+e.message);
   }
 }
+function saveAppTitle(){
+  state.settings.appTitle = document.getElementById('g_apptitle').value.trim() || '台指交易日誌';
+  markDirty();
+  toast('名稱已儲存');
+}
 function saveGeminiKey(){
   state.settings.geminiKey = document.getElementById('g_gemini').value.trim();
   saveLocal();
@@ -1144,9 +1499,28 @@ function saveGeminiKey(){
 }
 function saveFeeSettings(){
   state.settings.feePerSide = num(document.getElementById('g_fee').value) || 0;
-  state.settings.taxRate = num(document.getElementById('g_tax').value) || 0;
+  state.settings.taxPerSide = num(document.getElementById('g_tax').value) || 0;
   state.settings.multiplier = num(document.getElementById('g_mult').value) || 10;
   markDirty(); toast('費用設定已儲存');
+}
+function saveMarginSettings(){
+  state.settings.marginInit = num(document.getElementById('g_margin_init').value) || 0;
+  state.settings.marginMaintain = num(document.getElementById('g_margin_maintain').value) || 0;
+  state.settings.futuresGoal = num(document.getElementById('g_futures_goal').value) || 0;
+  markDirty(); toast('保證金/目標設定已儲存');
+}
+function addFuturesBalance(){
+  const date = document.getElementById('fb_date').value;
+  const balance = num(document.getElementById('fb_balance').value);
+  if(balance===null){ toast('請輸入餘額'); return; }
+  const idx = state.futuresBalanceLog.findIndex(b=>b.date===date);
+  if(idx>-1) state.futuresBalanceLog[idx].balance = balance;
+  else state.futuresBalanceLog.push({id:uid(), date, balance});
+  markDirty(); toast('已記錄餘額');
+}
+function delFuturesBalance(id){
+  state.futuresBalanceLog = state.futuresBalanceLog.filter(b=>b.id!==id);
+  markDirty();
 }
 function exportExcel(){
   if(typeof XLSX === 'undefined'){ toast('Excel 元件載入失敗，請檢查網路連線'); return; }
