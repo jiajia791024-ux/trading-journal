@@ -129,7 +129,7 @@
   <div class="headrow">
     <h1 id="appTitle">📓 台指交易日誌</h1>
     <div style="display:flex;align-items:center;gap:10px;">
-      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.2</span></div>
+      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.3</span></div>
       <span id="settingsGear" style="cursor:pointer;font-size:18px;" onclick="openSettings()">⚙</span>
     </div>
   </div>
@@ -830,7 +830,7 @@ function renderLog(){
       <div class="field"><label>盤別</label>
         <div class="btnrow">
           ${chip('t_session','早盤',ev.session,'gold-on')}
-          ${chip('t_session','夜盤',ev.session,'gold-on')}
+          ${chip('t_session','晚盤',ev.session,'gold-on')}
         </div>
       </div>
     </div>
@@ -1021,15 +1021,63 @@ function confirmAddLot(id){
   markDirty();
   toast('已加碼，均價已更新為 '+trade.entryPrice.toFixed(2));
 }
+let addExitTargetId = null;
+function toggleAddExit(id){
+  addExitTargetId = (addExitTargetId===id) ? null : id;
+  render();
+}
+function confirmAddExit(id){
+  const trade = state.stockTrades.find(t=>t.id===id);
+  if(!trade) return;
+  const date = document.getElementById('ax_date').value || todayStr();
+  const price = num(document.getElementById('ax_price').value);
+  const qty = num(document.getElementById('ax_qty').value);
+  const fee = num(document.getElementById('ax_fee').value) || 0;
+  if(price===null || qty===null){ toast('請輸入價格與股數'); return; }
+  const remaining = stockRemainingQty(trade);
+  if(qty > remaining){ toast('賣出股數不能超過剩餘持股 '+remaining+' 股'); return; }
+  if(!trade.exitLots){
+    trade.exitLots = getExitLots(trade);
+  }
+  trade.exitLots.push({date, price, qty, fee});
+  addExitTargetId = null;
+  markDirty();
+  const left = stockRemainingQty(trade);
+  toast(left>0 ? `已記錄賣出，剩餘 ${left} 股` : '已全部賣出');
+}
 let stockAccountFilter = '全部';
 let stockMonthFilter = '';
 let stockStatusFilter = 'all';
+function getExitLots(t){
+  if(t.exitLots && t.exitLots.length) return t.exitLots;
+  if(t.exitPrice!==null && t.exitPrice!==undefined && t.exitPrice!==''){
+    return [{date:t.exitDate, price:t.exitPrice, qty:t.exitQty||t.entryQty, fee:t.exitFee||0}];
+  }
+  return [];
+}
+function stockSoldQty(t){
+  return getExitLots(t).reduce((s,l)=>s+(l.qty||0),0);
+}
+function stockRemainingQty(t){
+  return Math.max(0, (t.entryQty||0) - stockSoldQty(t));
+}
+function stockIsOpen(t){
+  return stockRemainingQty(t) > 0;
+}
 function stockProfit(t){
-  if(t.exitPrice===null || t.exitPrice===undefined || t.exitPrice==='') return null;
-  const qty = t.exitQty || t.entryQty || 0;
-  const gross = t.direction==='多' ? (t.exitPrice - t.entryPrice) * qty : (t.entryPrice - t.exitPrice) * qty;
-  const fees = (t.entryFee||0) + (t.exitFee||0);
-  return gross - fees;
+  const exits = getExitLots(t);
+  if(!exits.length) return null;
+  const soldQty = exits.reduce((s,l)=>s+(l.qty||0),0);
+  const exitVal = exits.reduce((s,l)=>s+(l.price*l.qty||0),0);
+  const exitFeeTotal = exits.reduce((s,l)=>s+(l.fee||0),0);
+  const entryFeePortion = (t.entryFee||0) * (soldQty / (t.entryQty||soldQty||1));
+  const gross = t.direction==='多' ? (exitVal - t.entryPrice*soldQty) : (t.entryPrice*soldQty - exitVal);
+  return gross - entryFeePortion - exitFeeTotal;
+}
+function stockLatestExitDate(t){
+  const exits = getExitLots(t);
+  if(!exits.length) return null;
+  return exits.map(l=>l.date).filter(Boolean).sort().slice(-1)[0] || null;
 }
 function stockAccountBalance(account){
   const initial = state.stockCapital[account] || 0;
@@ -1037,8 +1085,10 @@ function stockAccountBalance(account){
     .reduce((s,l)=> s + (['存入','借入'].includes(l.type) ? l.amount : -l.amount), 0);
   const trades = state.stockTrades.filter(t=>t.account===account);
   const spent = trades.reduce((s,t)=> s + (t.entryPrice*t.entryQty + (t.entryFee||0)), 0);
-  const returned = trades.filter(t=>stockProfit(t)!==null)
-    .reduce((s,t)=> s + (t.exitPrice*t.exitQty - (t.exitFee||0)), 0);
+  const returned = trades.reduce((s,t)=>{
+    const exits = getExitLots(t);
+    return s + exits.reduce((sum,l)=> sum + (l.price*l.qty - (l.fee||0)), 0);
+  }, 0);
   return initial + ledgerNet - spent + returned;
 }
 function buildCashHistory(account){
@@ -1055,12 +1105,15 @@ function buildCashHistory(account){
     rows.push({ date:t.entryDate, sortKey:t.entryDate+' 2',
       desc:`買進 ${t.code}${t.name?' '+t.name:''} ${t.entryQty}股 @${t.entryPrice}`,
       amount: -(t.entryPrice*t.entryQty + (t.entryFee||0)), kind:'out' });
-    if(stockProfit(t)!==null){
-      const p = stockProfit(t);
-      rows.push({ date:t.exitDate, sortKey:t.exitDate+' 3',
-        desc:`賣出 ${t.code}${t.name?' '+t.name:''} ${t.exitQty}股 @${t.exitPrice}（損益 ${p>=0?'+':''}${Math.round(p).toLocaleString()}）`,
-        amount: t.exitPrice*t.exitQty - (t.exitFee||0), kind:'in' });
-    }
+    getExitLots(t).forEach(l=>{
+      const soldQty = l.qty;
+      const entryFeePortion = (t.entryFee||0) * (soldQty / (t.entryQty||soldQty||1));
+      const gross = t.direction==='多' ? (l.price-t.entryPrice)*soldQty : (t.entryPrice-l.price)*soldQty;
+      const p = gross - entryFeePortion - (l.fee||0);
+      rows.push({ date:l.date, sortKey:(l.date||'0000-00-00')+' 3',
+        desc:`賣出 ${t.code}${t.name?' '+t.name:''} ${l.qty}股 @${l.price}（損益 ${p>=0?'+':''}${Math.round(p).toLocaleString()}）`,
+        amount: l.price*l.qty - (l.fee||0), kind:'in' });
+    });
   });
   rows.sort((a,b)=>a.sortKey.localeCompare(b.sortKey));
   let running = 0;
@@ -1074,12 +1127,13 @@ function renderStock(){
   if(stockMonthFilter){
     filtered = filtered.filter(t=> (t.entryDate||'').startsWith(stockMonthFilter));
   }
-  if(stockStatusFilter==='holding') filtered = filtered.filter(t=>stockProfit(t)===null);
-  else if(stockStatusFilter==='sold') filtered = filtered.filter(t=>stockProfit(t)!==null);
-  const closed = filtered.filter(t=>stockProfit(t)!==null);
-  const open = filtered.filter(t=>stockProfit(t)===null);
-  const totalProfit = closed.reduce((s,t)=>s+stockProfit(t),0);
-  const totalCost = closed.reduce((s,t)=>s+(t.entryPrice*t.entryQty),0);
+  if(stockStatusFilter==='holding') filtered = filtered.filter(t=>stockIsOpen(t));
+  else if(stockStatusFilter==='sold') filtered = filtered.filter(t=>!stockIsOpen(t));
+  const withRealized = filtered.filter(t=>stockProfit(t)!==null);
+  const openTrades = filtered.filter(t=>stockIsOpen(t));
+  const closedTrades = filtered.filter(t=>!stockIsOpen(t));
+  const totalProfit = withRealized.reduce((s,t)=>s+stockProfit(t),0);
+  const totalCost = withRealized.reduce((s,t)=>s+(t.entryPrice*stockSoldQty(t)),0);
   const returnRate = totalCost? (totalProfit/totalCost*100) : 0;
 
   const editing = editingStockId ? state.stockTrades.find(t=>t.id===editingStockId) : null;
@@ -1105,8 +1159,8 @@ function renderStock(){
       ${totalProfit>=0?'+':''}${Math.round(totalProfit).toLocaleString()} 元
     </div>
     <div class="grid3" style="margin-top:10px;">
-      <div class="stat"><div class="n">${closed.length}</div><div class="l">已平倉</div></div>
-      <div class="stat"><div class="n">${open.length}</div><div class="l">持有中</div></div>
+      <div class="stat"><div class="n">${closedTrades.length}</div><div class="l">已平倉</div></div>
+      <div class="stat"><div class="n">${openTrades.length}</div><div class="l">持有中</div></div>
       <div class="stat"><div class="n" style="color:${returnRate>=0?'var(--red)':'var(--green)'}">${returnRate>=0?'+':''}${returnRate.toFixed(2)}%</div><div class="l">報酬率</div></div>
     </div>
   </div>
@@ -1151,7 +1205,7 @@ function renderStock(){
     </div>
   </div>
 
-  ${breakdownCard('每月/每年損益（股票）', filtered.filter(t=>stockProfit(t)!==null), stockProfit, 'exitDate')}
+  ${breakdownCard('每月/每年損益（股票）', withRealized.map(t=>({...t, _exitDate:stockLatestExitDate(t)})), stockProfit, '_exitDate')}
 
   <div class="card">
     <h2>股票交易列表${stockAccountFilter!=='全部'?`（${stockAccountFilter}）`:''}</h2>
@@ -1162,23 +1216,28 @@ function renderStock(){
     </div>
     ${list.length? list.map(t=>{
       const p = stockProfit(t);
-      const isOpen = p===null;
+      const isOpen = stockIsOpen(t);
+      const remaining = stockRemainingQty(t);
+      const soldQty = stockSoldQty(t);
+      const exitLots = getExitLots(t);
       return `
       <div class="entry">
         <div class="entry-top">
-          <span><span class="pill">${t.account}</span> ${t.code} ${t.name?`(${t.name})`:''} <span class="pill ${t.direction==='多'?'long':'short'}">${t.direction}</span></span>
+          <span><span class="pill">${t.account}</span> ${t.code} ${t.name?`(${t.name})`:''} <span class="pill ${t.direction==='多'?'long':'short'}">${t.direction}</span> ${isOpen?`<span class="pill">持有中 ${remaining}股</span>`:`<span class="pill">已賣出</span>`}</span>
           <span style="font-family:var(--mono);font-weight:700;color:${p===null?'var(--sub)':p>0?'var(--red)':p<0?'var(--green)':'var(--sub)'}">
-            ${p===null? '持有中' : (p>=0?'+':'')+Math.round(p).toLocaleString()+' 元'}
+            ${p===null? '尚未賣出' : (p>=0?'+':'')+Math.round(p).toLocaleString()+' 元'}
           </span>
         </div>
         <div class="kv"><span>進場（均價）</span><span class="v">${t.entryDate||'—'} @ ${fmt(t.entryPrice&&t.entryPrice.toFixed?t.entryPrice.toFixed(2):t.entryPrice)} × ${fmt(t.entryQty)}股</span></div>
         ${t.entryLots && t.entryLots.length>1 ? `
         <div class="hint" style="margin:4px 0;">分批買進紀錄：${t.entryLots.map(l=>`${l.date} @${l.price}×${l.qty}股`).join('；')}</div>` : ''}
-        ${t.exitPrice? `<div class="kv"><span>出場</span><span class="v">${t.exitDate||'—'} @ ${fmt(t.exitPrice)} × ${fmt(t.exitQty)}股</span></div>` : ''}
-        <div class="kv"><span>手續費(進/出)</span><span class="v">${fmt(t.entryFee)} / ${fmt(t.exitFee)}</span></div>
+        ${exitLots.length? `<div class="kv"><span>已賣出</span><span class="v">${soldQty}股（均價 ${(exitLots.reduce((s,l)=>s+l.price*l.qty,0)/soldQty).toFixed(2)}）</span></div>
+        ${exitLots.length>1? `<div class="hint" style="margin:4px 0;">分批賣出紀錄：${exitLots.map(l=>`${l.date} @${l.price}×${l.qty}股`).join('；')}</div>`:''}` : ''}
+        <div class="kv"><span>手續費(進/出)</span><span class="v">${fmt(t.entryFee)} / ${fmt(exitLots.reduce((s,l)=>s+(l.fee||0),0)||null)}</span></div>
         ${t.note?`<div class="entry-note" style="margin-top:6px;">${renderNoteText(t.note)}</div>`:''}
         <div class="entry-actions">
           ${isOpen? `<span class="ghost-btn" style="cursor:pointer;" onclick="toggleAddLot('${t.id}')">➕ 加碼買進</span>`:''}
+          ${isOpen? `<span class="ghost-btn" style="cursor:pointer;" onclick="toggleAddExit('${t.id}')">💰 賣出</span>`:''}
           <span class="ghost-btn" style="cursor:pointer;" onclick="editStock('${t.id}')">編輯</span>
           <span class="del-x" onclick="delItem('stockTrades','${t.id}', this)">刪除 ✕</span>
         </div>
@@ -1191,6 +1250,17 @@ function renderStock(){
           </div>
           <div class="field"><label>手續費</label><input type="number" id="al_fee"></div>
           <button class="primary-btn" onclick="confirmAddLot('${t.id}')">確認加碼（自動算均價）</button>
+        </div>` : ''}
+        ${addExitTargetId===t.id? `
+        <div class="entry" style="margin-top:8px;background:var(--card);">
+          <div class="hint">目前剩 ${remaining} 股可賣</div>
+          <div class="grid3">
+            <div class="field"><label>日期</label><input type="date" id="ax_date" value="${todayStr()}"></div>
+            <div class="field"><label>價格</label><input type="number" step="0.01" id="ax_price"></div>
+            <div class="field"><label>股數</label><input type="number" id="ax_qty" placeholder="最多${remaining}"></div>
+          </div>
+          <div class="field"><label>手續費</label><input type="number" id="ax_fee"></div>
+          <button class="primary-btn" onclick="confirmAddExit('${t.id}')">確認賣出</button>
         </div>` : ''}
       </div>`;
     }).join('') : '<div class="empty">尚無股票交易</div>'}
@@ -1535,12 +1605,18 @@ function exportExcel(){
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(futuresRows), '期貨紀錄');
 
-  const stockRows = state.stockTrades.map(t=>({
-    帳戶:t.account, 代號:t.code, 名稱:t.name, 方向:t.direction,
-    進場日期:t.entryDate, 進場價格:t.entryPrice, 進場股數:t.entryQty, 進場手續費:t.entryFee,
-    出場日期:t.exitDate, 出場價格:t.exitPrice, 出場股數:t.exitQty, 出場手續費:t.exitFee,
-    損益:stockProfit(t)===null?'持有中':Math.round(stockProfit(t)), 備註:t.note
-  }));
+  const stockRows = state.stockTrades.map(t=>{
+    const exits = getExitLots(t);
+    const soldQty = stockSoldQty(t);
+    const avgExit = soldQty? (exits.reduce((s,l)=>s+l.price*l.qty,0)/soldQty) : null;
+    return {
+      帳戶:t.account, 代號:t.code, 名稱:t.name, 方向:t.direction,
+      進場日期:t.entryDate, 進場均價:t.entryPrice, 進場股數:t.entryQty, 進場手續費:t.entryFee,
+      已賣出股數:soldQty||0, 賣出均價:avgExit, 剩餘股數:stockRemainingQty(t),
+      狀態: stockIsOpen(t)?'持有中':'已賣出',
+      損益:stockProfit(t)===null?'':Math.round(stockProfit(t)), 備註:t.note
+    };
+  });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(stockRows), '股票紀錄');
 
   const ledgerRows = state.stockCashLedger.map(l=>({ 帳戶:l.account, 日期:l.date, 類型:l.type, 金額:l.amount, 備註:l.note }));
