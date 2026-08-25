@@ -131,7 +131,7 @@
   <div class="headrow">
     <h1 id="appTitle">📓 台指交易日誌</h1>
     <div style="display:flex;align-items:center;gap:10px;">
-      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.10</span></div>
+      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.11</span></div>
       <span id="settingsGear" style="cursor:pointer;font-size:18px;" onclick="openSettings()">⚙</span>
     </div>
   </div>
@@ -1534,16 +1534,25 @@ function renderLinksSettingsSection(){
   </div>
   <div class="card">
     <h2>我的常用網站</h2>
-    ${list.length? list.map(l=>`
+    ${list.length? list.map((l,i)=>`
       <div class="entry">
         <div class="entry-top"><span><a href="${escapeHtml(l.url)}" target="_blank" rel="noopener" style="font-weight:600;">${escapeHtml(l.name)}</a></span></div>
         ${l.note?`<div class="entry-note">${escapeHtml(l.note)}</div>`:''}
         <div class="entry-actions">
+          <span style="cursor:pointer;padding:4px 8px;opacity:${i===0?0.3:1};" onclick="${i===0?'':`moveLink('${l.id}',-1)`}">↑</span>
+          <span style="cursor:pointer;padding:4px 8px;opacity:${i===list.length-1?0.3:1};" onclick="${i===list.length-1?'':`moveLink('${l.id}',1)`}">↓</span>
           <span class="ghost-btn" style="cursor:pointer;" onclick="editLink('${l.id}')">編輯</span>
           <span class="del-x" onclick="delItem('customLinks','${l.id}', this)">刪除 ✕</span>
         </div>
       </div>`).join('') : '<div class="empty">尚未加入任何網站</div>'}
   </div>`;
+}
+function moveLink(id, dir){
+  const idx = state.customLinks.findIndex(l=>l.id===id);
+  const newIdx = idx+dir;
+  if(idx<0 || newIdx<0 || newIdx>=state.customLinks.length) return;
+  [state.customLinks[idx], state.customLinks[newIdx]] = [state.customLinks[newIdx], state.customLinks[idx]];
+  markDirty();
 }
 function saveLink(){
   const name = document.getElementById('lk_name').value.trim();
