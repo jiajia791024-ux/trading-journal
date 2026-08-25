@@ -131,7 +131,7 @@
   <div class="headrow">
     <h1 id="appTitle">📓 台指交易日誌</h1>
     <div style="display:flex;align-items:center;gap:10px;">
-      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.8</span></div>
+      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.10</span></div>
       <span id="settingsGear" style="cursor:pointer;font-size:18px;" onclick="openSettings()">⚙</span>
     </div>
   </div>
@@ -1566,8 +1566,10 @@ function cancelEditLink(){ editingLinkId = null; render(); }
 
 /* ---------------- 筆記 tab ---------------- */
 let editingNoteId = null;
-let notesTopFilter = '全部';
-let notesCategoryFilter = '全部';
+let notesTopFilter = ['全部'];
+let notesCategoryFilter = ['全部'];
+let notesTopPanelOpen = false;
+let notesCatPanelOpen = false;
 let notesSearchQuery = '';
 function moveArrayItem(arr, idx, dir){
   const newIdx = idx+dir;
@@ -1579,7 +1581,7 @@ function renderNotes(){
   const cats = state.techCategories;
   const q = notesSearchQuery.trim().toLowerCase();
   const list = [...state.techNotes]
-    .filter(n=>(notesTopFilter==='全部' || n.topCategory===notesTopFilter) && (notesCategoryFilter==='全部' || n.category===notesCategoryFilter))
+    .filter(n=>(notesTopFilter.includes('全部') || notesTopFilter.includes(n.topCategory)) && (notesCategoryFilter.includes('全部') || notesCategoryFilter.includes(n.category)))
     .filter(n=> !q || (n.title||'').toLowerCase().includes(q) || (n.content||'').toLowerCase().includes(q))
     .sort((a,b)=>b.date.localeCompare(a.date));
   const editing = editingNoteId ? state.techNotes.find(n=>n.id===editingNoteId) : null;
@@ -1638,18 +1640,21 @@ function renderNotes(){
 
   <div class="card">
     <h2>我的筆記</h2>
-    <div class="field"><label>🔍 搜尋關鍵字</label><input type="text" id="nt_search" value="${escapeHtml(notesSearchQuery)}" placeholder="搜尋標題或內容…" oninput="setNotesSearch(this.value)"></div>
-    <div class="field"><label>大分類篩選</label>
-      <div class="btnrow">
-        <div class="chip ${notesTopFilter==='全部'?'gold-on':''}" onclick="setNotesTop('全部')">全部</div>
-        ${tops.map(c=>`<div class="chip ${notesTopFilter===c?'gold-on':''}" onclick="setNotesTop('${c}')">${c}</div>`).join('')}
-      </div>
+    <div class="field"><label>🔍 搜尋關鍵字</label><input type="text" id="nt_search" value="${escapeHtml(notesSearchQuery)}" placeholder="搜尋標題或內容…"
+      oninput="setNotesSearch(this.value)"></div>
+    <div class="field">
+      <label style="cursor:pointer;" onclick="toggleNotesTopPanel()">大分類篩選：<span style="color:var(--gold);">${notesTopFilter.includes('全部')?'全部':notesTopFilter.join('、')||'（未選）'}</span> ${notesTopPanelOpen?'▲':'▼'}</label>
+      ${notesTopPanelOpen? `<div class="btnrow" style="margin-top:6px;">
+        <div class="chip ${notesTopFilter.includes('全部')?'gold-on':''}" onclick="toggleNotesTop('全部')">全部</div>
+        ${tops.map(c=>`<div class="chip ${notesTopFilter.includes(c)?'gold-on':''}" onclick="toggleNotesTop('${c}')">${c}</div>`).join('')}
+      </div>` : ''}
     </div>
-    <div class="field"><label>次分類篩選</label>
-      <div class="btnrow">
-        <div class="chip ${notesCategoryFilter==='全部'?'gold-on':''}" onclick="setNotesCategory('全部')">全部</div>
-        ${cats.map(c=>`<div class="chip ${notesCategoryFilter===c?'gold-on':''}" onclick="setNotesCategory('${c}')">${c}</div>`).join('')}
-      </div>
+    <div class="field">
+      <label style="cursor:pointer;" onclick="toggleNotesCatPanel()">次分類篩選：<span style="color:var(--gold);">${notesCategoryFilter.includes('全部')?'全部':notesCategoryFilter.join('、')||'（未選）'}</span> ${notesCatPanelOpen?'▲':'▼'}</label>
+      ${notesCatPanelOpen? `<div class="btnrow" style="margin-top:6px;">
+        <div class="chip ${notesCategoryFilter.includes('全部')?'gold-on':''}" onclick="toggleNotesCat('全部')">全部</div>
+        ${cats.map(c=>`<div class="chip ${notesCategoryFilter.includes(c)?'gold-on':''}" onclick="toggleNotesCat('${c}')">${c}</div>`).join('')}
+      </div>` : ''}
     </div>
     ${list.length? list.map(n=>`
       <div class="entry">
@@ -1662,16 +1667,36 @@ function renderNotes(){
       </div>`).join('') : '<div class="empty">尚無筆記</div>'}
   </div>`;
 }
-function setNotesTop(c){ notesTopFilter = c; render(); }
+function toggleNotesTopPanel(){ notesTopPanelOpen = !notesTopPanelOpen; render(); }
+function toggleNotesCatPanel(){ notesCatPanelOpen = !notesCatPanelOpen; render(); }
+function toggleNotesTop(c){
+  if(c==='全部'){ notesTopFilter = ['全部']; render(); return; }
+  notesTopFilter = notesTopFilter.filter(x=>x!=='全部');
+  if(notesTopFilter.includes(c)) notesTopFilter = notesTopFilter.filter(x=>x!==c);
+  else notesTopFilter.push(c);
+  if(!notesTopFilter.length) notesTopFilter = ['全部'];
+  render();
+}
+function toggleNotesCat(c){
+  if(c==='全部'){ notesCategoryFilter = ['全部']; render(); return; }
+  notesCategoryFilter = notesCategoryFilter.filter(x=>x!=='全部');
+  if(notesCategoryFilter.includes(c)) notesCategoryFilter = notesCategoryFilter.filter(x=>x!==c);
+  else notesCategoryFilter.push(c);
+  if(!notesCategoryFilter.length) notesCategoryFilter = ['全部'];
+  render();
+}
+let notesSearchTimer = null;
 function setNotesSearch(v){
   notesSearchQuery = v;
-  const el = document.getElementById('nt_search');
-  const pos = el ? el.selectionStart : null;
-  render();
-  const el2 = document.getElementById('nt_search');
-  if(el2){ el2.focus(); if(pos!==null) el2.setSelectionRange(pos,pos); }
+  clearTimeout(notesSearchTimer);
+  notesSearchTimer = setTimeout(()=>{
+    const el = document.getElementById('nt_search');
+    const pos = el ? el.selectionStart : null;
+    render();
+    const el2 = document.getElementById('nt_search');
+    if(el2){ el2.focus(); if(pos!==null) el2.setSelectionRange(pos,pos); }
+  }, 400);
 }
-function setNotesCategory(c){ notesCategoryFilter = c; render(); }
 function addTopCategory(){
   const v = document.getElementById('nt_newtop').value.trim();
   if(!v) return;
