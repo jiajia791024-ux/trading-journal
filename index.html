@@ -131,7 +131,7 @@
   <div class="headrow">
     <h1 id="appTitle">📓 台指交易日誌</h1>
     <div style="display:flex;align-items:center;gap:10px;">
-      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.11</span></div>
+      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.13</span></div>
       <span id="settingsGear" style="cursor:pointer;font-size:18px;" onclick="openSettings()">⚙</span>
     </div>
   </div>
@@ -487,6 +487,7 @@ function saveSentiment(){
 function editSentiment(id){
   editingSentimentId = id;
   render();
+  document.getElementById('main').scrollIntoView({behavior:'smooth'});
 }
 function cancelEditSentiment(){
   editingSentimentId = null;
@@ -496,6 +497,9 @@ function cancelEditSentiment(){
 /* ---------------- 盤前記錄 tab ---------------- */
 const DIRECTIONS = ['多方','偏多','觀望','偏空','空方','拉高會殺','殺低有反彈'];
 const PATTERNS = ['強趨勢','雙巴','穩趨勢'];
+let planUpLevels = [];
+let planDownLevels = [];
+let planReviewTargetId = null;
 function renderPlan(){
   const list=[...state.plans].sort((a,b)=>b.date.localeCompare(a.date)||b.session.localeCompare(a.session));
   return `
@@ -516,9 +520,22 @@ function renderPlan(){
     <div class="field"><label>前盤形態</label>
       <div class="btnrow">${PATTERNS.map(p=>`<div class="chip" data-f="p_pattern" data-v="${p}" onclick="pick(this)">${p}</div>`).join('')}</div>
     </div>
-    <div class="grid2">
-      <div class="field"><label>壓力目標</label><input type="number" id="p_resist" placeholder="46407"></div>
-      <div class="field"><label>支撐目標</label><input type="number" id="p_support" placeholder="45600"></div>
+    <div class="field"><label>關鍵轉折點</label><input type="number" id="p_key" placeholder="例：46000（站上偏多、跌破偏空的分界）"></div>
+    <div class="field"><label>上方關卡（突破後看多，由近到遠）</label>
+      ${planUpLevels.map((l,i)=>`
+        <div class="grid2" style="margin-bottom:6px;">
+          <input type="number" id="up_price_${i}" value="${l.price}" placeholder="點位">
+          <div class="btnrow"><input type="text" id="up_note_${i}" value="${escapeHtml(l.note||'')}" placeholder="備註，例：突破轉強" style="flex:1;"><span class="del-x" onclick="removeUpLevel(${i})">✕</span></div>
+        </div>`).join('')}
+      <button class="ghost-btn" onclick="addUpLevel()">＋ 新增上方關卡</button>
+    </div>
+    <div class="field"><label>下方關卡（跌破後看空，由近到遠）</label>
+      ${planDownLevels.map((l,i)=>`
+        <div class="grid2" style="margin-bottom:6px;">
+          <input type="number" id="down_price_${i}" value="${l.price}" placeholder="點位">
+          <div class="btnrow"><input type="text" id="down_note_${i}" value="${escapeHtml(l.note||'')}" placeholder="備註，例：跌破轉弱" style="flex:1;"><span class="del-x" onclick="removeDownLevel(${i})">✕</span></div>
+        </div>`).join('')}
+      <button class="ghost-btn" onclick="addDownLevel()">＋ 新增下方關卡</button>
     </div>
     <div class="field"><label>規劃備註</label>${noteToolbar('p_note')}<textarea id="p_note" placeholder="等待新一波強趨勢，方向未知，謹慎觀察…"></textarea></div>
     <button class="primary-btn" onclick="savePlan()">儲存規劃</button>
@@ -537,20 +554,83 @@ function renderPlan(){
       <div class="entry">
         <div class="entry-top"><span>${p.date} · ${p.session}</span><span class="del-x" onclick="delItem('plans','${p.id}', this)">✕</span></div>
         <div>${(p.directions||[]).map(d=>`<span class="pill">${d}</span>`).join(' ')} ${p.pattern?`<span class="pill">${p.pattern}</span>`:''}</div>
-        <div class="kv"><span>壓力 / 支撐</span><span class="v">${fmt(p.resist)} / ${fmt(p.support)}</span></div>
+        ${p.keyLevel? `<div class="kv"><span>關鍵轉折點</span><span class="v">${p.keyLevel}</span></div>`:''}
+        ${(p.upLevels||[]).length? `<div class="kv"><span>上方關卡</span><span class="v">${p.upLevels.map(l=>l.price+(l.note?'('+l.note+')':'')).join(' → ')}</span></div>`:''}
+        ${(p.downLevels||[]).length? `<div class="kv"><span>下方關卡</span><span class="v">${p.downLevels.map(l=>l.price+(l.note?'('+l.note+')':'')).join(' → ')}</span></div>`:''}
         ${p.note?`<div class="entry-note" style="margin-top:6px;">${renderNoteText(p.note)}</div>`:''}
+        ${p.review? `
+        <div class="kv" style="margin-top:8px;"><span>盤後 開/高/低/收</span><span class="v">${p.review.open} / ${p.review.high} / ${p.review.low} / ${p.review.close}</span></div>
+        ${(p.review.matched||[]).length? `<div>${p.review.matched.map(d=>`<span class="pill gold-on" style="border:1px solid var(--gold);">✓ ${d}</span>`).join(' ')}</div>`:''}
+        ${p.review.note? `<div class="entry-note" style="margin-top:4px;">${renderNoteText(p.review.note)}</div>`:''}
+        ` : ''}
+        <div class="entry-actions">
+          <span class="ghost-btn" style="cursor:pointer;" onclick="toggleReview('${p.id}')">🔍 盤後複盤${p.review?'（編輯）':''}</span>
+        </div>
+        ${planReviewTargetId===p.id? `
+        <div class="entry" style="margin-top:8px;background:var(--card);">
+          <div class="grid2">
+            <div class="field"><label>開盤</label><input type="number" id="rv_open" value="${p.review?p.review.open:''}"></div>
+            <div class="field"><label>最高</label><input type="number" id="rv_high" value="${p.review?p.review.high:''}"></div>
+          </div>
+          <div class="grid2">
+            <div class="field"><label>最低</label><input type="number" id="rv_low" value="${p.review?p.review.low:''}"></div>
+            <div class="field"><label>收盤</label><input type="number" id="rv_close" value="${p.review?p.review.close:''}"></div>
+          </div>
+          <div class="field"><label>最後符合盤前規劃的是哪個（可複選）</label>
+            <div class="btnrow">${DIRECTIONS.map(d=>`<div class="chip ${p.review&&(p.review.matched||[]).includes(d)?'gold-on':''}" data-multi="rv_match" data-v="${d}" onclick="toggleChip(this)">${d}</div>`).join('')}</div>
+          </div>
+          <div class="field"><label>複盤備註</label>${noteToolbar('rv_note')}<textarea id="rv_note">${p.review?escapeHtml(p.review.note||''):''}</textarea></div>
+          <button class="primary-btn" onclick="saveReview('${p.id}')">儲存複盤</button>
+        </div>` : ''}
       </div>`).join('') : '<div class="empty">尚無規劃</div>'}
   </div>`;
+}
+function addUpLevel(){ syncUpLevels(); planUpLevels.push({price:'',note:''}); render(); }
+function removeUpLevel(i){ syncUpLevels(); planUpLevels.splice(i,1); render(); }
+function addDownLevel(){ syncDownLevels(); planDownLevels.push({price:'',note:''}); render(); }
+function removeDownLevel(i){ syncDownLevels(); planDownLevels.splice(i,1); render(); }
+function syncUpLevels(){
+  planUpLevels = planUpLevels.map((_,i)=>({
+    price: document.getElementById('up_price_'+i)?.value ?? '',
+    note: document.getElementById('up_note_'+i)?.value ?? ''
+  }));
+}
+function syncDownLevels(){
+  planDownLevels = planDownLevels.map((_,i)=>({
+    price: document.getElementById('down_price_'+i)?.value ?? '',
+    note: document.getElementById('down_note_'+i)?.value ?? ''
+  }));
+}
+function toggleReview(id){
+  planReviewTargetId = (planReviewTargetId===id) ? null : id;
+  render();
+}
+function saveReview(id){
+  const plan = state.plans.find(p=>p.id===id);
+  if(!plan) return;
+  const open = num(document.getElementById('rv_open').value);
+  const high = num(document.getElementById('rv_high').value);
+  const low = num(document.getElementById('rv_low').value);
+  const close = num(document.getElementById('rv_close').value);
+  const matched = [...document.querySelectorAll('[data-multi="rv_match"].gold-on')].map(e=>e.dataset.v);
+  const note = document.getElementById('rv_note').value;
+  plan.review = { open, high, low, close, matched, note };
+  planReviewTargetId = null;
+  markDirty(); toast('已儲存複盤');
 }
 function savePlan(){
   const g=id=>document.getElementById(id).value;
   const session = document.querySelector('[data-f="p_session"].gold-on')?.dataset.v || '早盤';
   const directions = [...document.querySelectorAll('[data-multi="p_dir"].gold-on')].map(e=>e.dataset.v);
   const pattern = document.querySelector('[data-f="p_pattern"].gold-on')?.dataset.v || '';
+  syncUpLevels(); syncDownLevels();
+  const upLevels = planUpLevels.filter(l=>l.price!=='' && l.price!==null && l.price!==undefined).map(l=>({price:num(l.price), note:l.note}));
+  const downLevels = planDownLevels.filter(l=>l.price!=='' && l.price!==null && l.price!==undefined).map(l=>({price:num(l.price), note:l.note}));
   state.plans.push({
     id:uid(), date:g('p_date'), session, directions, pattern,
-    resist:num(g('p_resist')), support:num(g('p_support')), note:g('p_note')
+    keyLevel: num(g('p_key')), upLevels, downLevels, note:g('p_note')
   });
+  planUpLevels = []; planDownLevels = [];
   markDirty(); toast('已儲存規劃');
 }
 
@@ -836,7 +916,7 @@ function renderLog(){
       <div class="chip ${isAll?'gold-on':''}" onclick="setFuturesRange('__all__','')">全部</div>
     </div>
     <div style="font-family:var(--mono);font-size:26px;font-weight:700;color:${pts>=0?'var(--red)':'var(--green)'};margin-bottom:2px;">
-      ${pts>=0?'+':''}${Math.round(pts)} 點（毛）
+      ${pts>=0?'+':''}${Math.round(pts)} 點
     </div>
     <div style="font-family:var(--mono);font-size:15px;color:var(--sub);margin-bottom:10px;">
       淨損益 ${netAmt>=0?'+':''}${Math.round(netAmt).toLocaleString()} 元（已扣手續費/稅 ${Math.round(costAmt).toLocaleString()} 元）
@@ -1575,6 +1655,7 @@ function cancelEditLink(){ editingLinkId = null; render(); }
 
 /* ---------------- 筆記 tab ---------------- */
 let editingNoteId = null;
+let editingNoteImages = [];
 let notesTopFilter = ['全部'];
 let notesCategoryFilter = ['全部'];
 let notesTopPanelOpen = false;
@@ -1611,6 +1692,16 @@ function renderNotes(){
     <div class="field"><label>內容</label>
       ${noteToolbar('nt_content')}
       <textarea id="nt_content" style="min-height:160px;">${escapeHtml(ev.content)}</textarea>
+    </div>
+    <div class="field"><label>附圖（選填）</label>
+      <div class="hint">圖片會直接存進你的雲端資料檔，建議每篇筆記別放太多張、太大張的圖，不然同步會變慢。</div>
+      <input type="file" accept="image/*" multiple onchange="addNoteImages(this)">
+      ${editingNoteImages.length? `<div class="btnrow" style="margin-top:8px;flex-wrap:wrap;">
+        ${editingNoteImages.map((img,i)=>`<div style="position:relative;">
+          <img src="${img}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;border:1px solid var(--line);">
+          <span style="position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;font-size:12px;cursor:pointer;" onclick="removeNoteImage(${i})">✕</span>
+        </div>`).join('')}
+      </div>` : ''}
     </div>
     <div class="btnrow">
       <button class="primary-btn" style="flex:1;" onclick="saveNote()">${editing?'更新筆記':'儲存筆記'}</button>
@@ -1669,6 +1760,7 @@ function renderNotes(){
       <div class="entry">
         <div class="entry-top"><span><span class="pill">${n.topCategory||'未分類'}</span> <span class="pill">${n.category||'未分類'}</span> ${n.date} ${n.title?'· '+escapeHtml(n.title):''}</span></div>
         <div class="entry-note">${renderNoteText(n.content)}</div>
+        ${n.images && n.images.length? `<div class="btnrow" style="margin-top:8px;flex-wrap:wrap;">${n.images.map(img=>`<a href="${img}" target="_blank" rel="noopener"><img src="${img}" style="width:90px;height:90px;object-fit:cover;border-radius:8px;cursor:pointer;"></a>`).join('')}</div>` : ''}
         <div class="entry-actions">
           <span class="ghost-btn" style="cursor:pointer;" onclick="editNote('${n.id}')">編輯</span>
           <span class="del-x" onclick="delItem('techNotes','${n.id}', this)">刪除 ✕</span>
@@ -1728,6 +1820,19 @@ function delSubCategory(i){
   markDirty();
 }
 function moveSub(i,dir){ moveArrayItem(state.techCategories, i, dir); markDirty(); }
+async function addNoteImages(input){
+  const files = [...input.files];
+  for(const f of files){
+    const dataUrl = await fileToBase64(f);
+    editingNoteImages.push(dataUrl);
+  }
+  input.value = '';
+  render();
+}
+function removeNoteImage(idx){
+  editingNoteImages.splice(idx,1);
+  render();
+}
 function saveNote(){
   const topCategory = document.querySelector('[data-f="nt_top"].gold-on')?.dataset.v || state.techTopCategories[0] || '';
   const category = document.querySelector('[data-f="nt_cat"].gold-on')?.dataset.v || state.techCategories[0] || '';
@@ -1735,18 +1840,27 @@ function saveNote(){
   const title = document.getElementById('nt_title').value.trim();
   const content = document.getElementById('nt_content').value;
   if(!content.trim()){ toast('請輸入內容'); return; }
+  const images = [...editingNoteImages];
   if(editingNoteId){
     const idx = state.techNotes.findIndex(n=>n.id===editingNoteId);
-    if(idx>-1) state.techNotes[idx] = {...state.techNotes[idx], date, topCategory, category, title, content};
+    if(idx>-1) state.techNotes[idx] = {...state.techNotes[idx], date, topCategory, category, title, content, images};
     editingNoteId = null;
+    editingNoteImages = [];
     markDirty(); toast('已更新筆記');
   } else {
-    state.techNotes.push({id:uid(), date, topCategory, category, title, content});
+    state.techNotes.push({id:uid(), date, topCategory, category, title, content, images});
+    editingNoteImages = [];
     markDirty(); toast('已儲存筆記');
   }
 }
-function editNote(id){ editingNoteId = id; render(); }
-function cancelEditNote(){ editingNoteId = null; render(); }
+function editNote(id){
+  editingNoteId = id;
+  const n = state.techNotes.find(x=>x.id===id);
+  editingNoteImages = n && n.images ? [...n.images] : [];
+  render();
+  document.getElementById('main').scrollIntoView({behavior:'smooth'});
+}
+function cancelEditNote(){ editingNoteId = null; editingNoteImages = []; render(); }
 
 /* ---------------- 損益總覽 tab ---------------- */
 let analyticsSrc = { futures:true, stock:true };
@@ -2110,7 +2224,9 @@ function exportExcel(){
 
   const planRows = state.plans.map(p=>({
     日期:p.date, 盤別:p.session, 操作方向:(p.directions||[]).join('、'), 前盤形態:p.pattern,
-    壓力目標:p.resist, 支撐目標:p.support, 備註:p.note
+    關鍵轉折點:p.keyLevel, 上方關卡:(p.upLevels||[]).map(l=>l.price).join('、'), 下方關卡:(p.downLevels||[]).map(l=>l.price).join('、'),
+    備註:p.note, 盤後開高低收: p.review?`${p.review.open}/${p.review.high}/${p.review.low}/${p.review.close}`:'',
+    複盤符合:(p.review&&p.review.matched||[]).join('、')
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(planRows), '盤前規劃');
 
