@@ -131,7 +131,7 @@
   <div class="headrow">
     <h1 id="appTitle">📓 台指交易日誌</h1>
     <div style="display:flex;align-items:center;gap:10px;">
-      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.16</span></div>
+      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.17</span></div>
       <span id="settingsGear" style="cursor:pointer;font-size:18px;" onclick="openSettings()">⚙</span>
     </div>
   </div>
@@ -385,9 +385,8 @@ function renderData(){
         </div>
       </div>
     </div>
-    <div class="grid2">
-      <div class="field"><label>正逆價差</label><input type="number" id="d_spread" placeholder="-10"></div>
-      <div class="field"><label>矛盾累積</label><input type="number" id="d_contra" placeholder="0"></div>
+    <div class="field">
+      <label>正逆價差</label><input type="number" id="d_spread" placeholder="-10">
     </div>
     <div class="grid2">
       <div class="field"><label>VIX</label><input type="number" step="0.01" id="d_vix" placeholder="31.09"></div>
@@ -405,7 +404,6 @@ function renderData(){
     <h2>最新摘要（${latest.date} ${latest.session}）</h2>
     <div class="grid3">
       <div class="stat"><div class="n">${fmt(latest.spread)}</div><div class="l">正逆價差</div></div>
-      <div class="stat"><div class="n">${fmt(latest.contra)}</div><div class="l">矛盾累積</div></div>
       <div class="stat"><div class="n ${latest.vix>=30?'up':'down'}">${fmt(latest.vix)}</div><div class="l">VIX</div></div>
     </div>
     <div class="grid3" style="margin-top:10px;">
@@ -420,7 +418,7 @@ function renderData(){
     ${list.length? list.map(d=>`
       <div class="entry">
         <div class="entry-top"><span>${d.date} · ${d.session}</span><span class="del-x" onclick="delItem('marketData','${d.id}', this)">✕</span></div>
-        <div class="kv"><span>正逆價差 / 矛盾累積</span><span class="v">${fmt(d.spread)} / ${fmt(d.contra)}</span></div>
+        <div class="kv"><span>正逆價差</span><span class="v">${fmt(d.spread)}</span></div>
         <div class="kv"><span>VIX / 外資淨口數</span><span class="v">${fmt(d.vix)} / ${fmt(d.foreign)}</span></div>
         <div class="kv"><span>收盤 / 振幅</span><span class="v">${fmt(d.close)} / ${fmt(d.range)}</span></div>
       </div>
@@ -433,7 +431,7 @@ function saveMarketData(){
   const session = document.querySelector('[data-f="d_session"].gold-on')?.dataset.v || '早盤';
   state.marketData.push({
     id:uid(), date:g('d_date'), session,
-    spread:num(g('d_spread')), contra:num(g('d_contra')), vix:num(g('d_vix')),
+    spread:num(g('d_spread')), vix:num(g('d_vix')),
     foreign:num(g('d_foreign')), close:num(g('d_close')), range:num(g('d_range'))
   });
   markDirty(); toast('已儲存數據');
@@ -576,6 +574,8 @@ function renderPlan(){
         ${p.review? `
         <div class="kv" style="margin-top:8px;"><span>盤後 開/高/低/收</span><span class="v">${p.review.open} / ${p.review.high} / ${p.review.low} / ${p.review.close}</span></div>
         ${(p.review.matched||[]).length? `<div>${p.review.matched.map(d=>`<span class="pill gold-on" style="border:1px solid var(--gold);">✓ ${d}</span>`).join(' ')}</div>`:''}
+        ${(p.review.matchedUp||[]).length? `<div style="margin-top:4px;">${p.review.matchedUp.map(i=>p.upLevels&&p.upLevels[i]?`<span class="pill gold-on" style="border:1px solid var(--gold);">✓ 上方 ${p.upLevels[i].price}${p.upLevels[i].note?'('+p.upLevels[i].note+')':''}</span>`:'').join(' ')}</div>`:''}
+        ${(p.review.matchedDown||[]).length? `<div style="margin-top:4px;">${p.review.matchedDown.map(i=>p.downLevels&&p.downLevels[i]?`<span class="pill gold-on" style="border:1px solid var(--gold);">✓ 下方 ${p.downLevels[i].price}${p.downLevels[i].note?'('+p.downLevels[i].note+')':''}</span>`:'').join(' ')}</div>`:''}
         ${p.review.note? `<div class="entry-note" style="margin-top:4px;">${renderNoteText(p.review.note)}</div>`:''}
         ` : ''}
         <div class="entry-actions">
@@ -594,6 +594,14 @@ function renderPlan(){
           <div class="field"><label>最後符合盤前規劃的是哪個（可複選）</label>
             <div class="btnrow">${DIRECTIONS.map(d=>`<div class="chip ${p.review&&(p.review.matched||[]).includes(d)?'gold-on':''}" data-multi="rv_match" data-v="${d}" onclick="toggleChip(this)">${d}</div>`).join('')}</div>
           </div>
+          ${(p.upLevels||[]).length? `
+          <div class="field"><label>上方關卡是否滿足（可複選）</label>
+            <div class="btnrow">${p.upLevels.map((l,i)=>`<div class="chip ${p.review&&(p.review.matchedUp||[]).includes(i)?'gold-on':''}" data-multi="rv_up" data-v="${i}" onclick="toggleChip(this)">${l.price}${l.note?'('+l.note+')':''}</div>`).join('')}</div>
+          </div>` : ''}
+          ${(p.downLevels||[]).length? `
+          <div class="field"><label>下方關卡是否滿足（可複選）</label>
+            <div class="btnrow">${p.downLevels.map((l,i)=>`<div class="chip ${p.review&&(p.review.matchedDown||[]).includes(i)?'gold-on':''}" data-multi="rv_down" data-v="${i}" onclick="toggleChip(this)">${l.price}${l.note?'('+l.note+')':''}</div>`).join('')}</div>
+          </div>` : ''}
           <div class="field"><label>複盤備註</label>${noteToolbar('rv_note')}<textarea id="rv_note">${p.review?escapeHtml(p.review.note||''):''}</textarea></div>
           <button class="primary-btn" onclick="saveReview('${p.id}')">儲存複盤</button>
         </div>` : ''}
@@ -628,8 +636,10 @@ function saveReview(id){
   const low = num(document.getElementById('rv_low').value);
   const close = num(document.getElementById('rv_close').value);
   const matched = [...document.querySelectorAll('[data-multi="rv_match"].gold-on')].map(e=>e.dataset.v);
+  const matchedUp = [...document.querySelectorAll('[data-multi="rv_up"].gold-on')].map(e=>Number(e.dataset.v));
+  const matchedDown = [...document.querySelectorAll('[data-multi="rv_down"].gold-on')].map(e=>Number(e.dataset.v));
   const note = document.getElementById('rv_note').value;
-  plan.review = { open, high, low, close, matched, note };
+  plan.review = { open, high, low, close, matched, matchedUp, matchedDown, note };
   planReviewTargetId = null;
   markDirty(); toast('已儲存複盤');
 }
@@ -1720,6 +1730,8 @@ function cancelEditLink(){ editingLinkId = null; render(); }
 
 /* ---------------- 筆記 tab ---------------- */
 let editingNoteId = null;
+let notesFormOpen = false;
+let notesCategoryMgmtOpen = false;
 let editingNoteImages = [];
 let notesTopFilter = ['全部'];
 let notesCategoryFilter = ['全部'];
@@ -1743,7 +1755,8 @@ function renderNotes(){
   const ev = editing || {date:todayStr(), topCategory:tops[0]||'', category:cats[0]||'', title:'', content:''};
   return `
   <div class="card">
-    <h2>${editing?'編輯筆記':'新增筆記'}</h2>
+    <h2 style="cursor:pointer;" onclick="toggleNoteFormOpen()">${editing?'編輯筆記':'新增筆記'} <span style="color:var(--gold);font-size:12px;">${notesFormOpen||editing?'▲ 收合':'▼ 展開'}</span></h2>
+    ${notesFormOpen||editing? `
     <div class="field"><label>大分類</label>
       <div class="btnrow">${tops.map(c=>`<div class="chip ${ev.topCategory===c?'gold-on':''}" data-f="nt_top" data-v="${c}" onclick="pick(this)">${c}</div>`).join('')}</div>
     </div>
@@ -1772,15 +1785,17 @@ function renderNotes(){
       <button class="primary-btn" style="flex:1;" onclick="saveNote()">${editing?'更新筆記':'儲存筆記'}</button>
       ${editing?`<button class="ghost-btn" onclick="cancelEditNote()">取消</button>`:''}
     </div>
+    ` : ''}
   </div>
 
   <div class="card">
-    <h2>分類管理</h2>
-    <div class="hint">新增、排序大分類與次分類，上面新增筆記的選項會跟著這裡調整。</div>
+    <h2 style="cursor:pointer;" onclick="toggleNoteCategoryMgmtOpen()">分類管理 <span style="color:var(--gold);font-size:12px;">${notesCategoryMgmtOpen?'▲ 收合':'▼ 展開'}</span></h2>
+    ${notesCategoryMgmtOpen? `
+    <div class="hint">新增、排序、改名大分類與次分類，上面新增筆記的選項會跟著這裡調整。</div>
     <h2 style="margin-top:12px;font-size:13px;">大分類</h2>
     ${tops.map((c,i)=>`
       <div class="checklist-item">
-        <span class="txt">${c}</span>
+        <input type="text" value="${escapeHtml(c)}" style="flex:1;background:transparent;border:1px solid var(--line);border-radius:6px;color:var(--text);padding:4px 8px;" onchange="renameTopCategory(${i}, this.value)">
         <span style="cursor:pointer;padding:4px 8px;opacity:${i===0?0.3:1};" onclick="${i===0?'':`moveTop(${i},-1)`}">↑</span>
         <span style="cursor:pointer;padding:4px 8px;opacity:${i===tops.length-1?0.3:1};" onclick="${i===tops.length-1?'':`moveTop(${i},1)`}">↓</span>
         <span class="del-x" onclick="delTopCategory(${i})">✕</span>
@@ -1792,7 +1807,7 @@ function renderNotes(){
     <h2 style="margin-top:16px;font-size:13px;">次分類</h2>
     ${cats.map((c,i)=>`
       <div class="checklist-item">
-        <span class="txt">${c}</span>
+        <input type="text" value="${escapeHtml(c)}" style="flex:1;background:transparent;border:1px solid var(--line);border-radius:6px;color:var(--text);padding:4px 8px;" onchange="renameSubCategory(${i}, this.value)">
         <span style="cursor:pointer;padding:4px 8px;opacity:${i===0?0.3:1};" onclick="${i===0?'':`moveSub(${i},-1)`}">↑</span>
         <span style="cursor:pointer;padding:4px 8px;opacity:${i===cats.length-1?0.3:1};" onclick="${i===cats.length-1?'':`moveSub(${i},1)`}">↓</span>
         <span class="del-x" onclick="delSubCategory(${i})">✕</span>
@@ -1801,6 +1816,7 @@ function renderNotes(){
       <input type="text" id="nt_newcat" placeholder="新增次分類…" style="flex:1;">
       <button class="ghost-btn" onclick="addNoteCategory()">新增</button>
     </div>
+    ` : ''}
   </div>
 
   <div class="card">
@@ -1885,6 +1901,26 @@ function delSubCategory(i){
   markDirty();
 }
 function moveSub(i,dir){ moveArrayItem(state.techCategories, i, dir); markDirty(); }
+function renameTopCategory(i, newName){
+  newName = newName.trim();
+  if(!newName) return;
+  const oldName = state.techTopCategories[i];
+  if(oldName === newName) return;
+  state.techTopCategories[i] = newName;
+  state.techNotes.forEach(n=>{ if(n.topCategory===oldName) n.topCategory = newName; });
+  markDirty();
+}
+function renameSubCategory(i, newName){
+  newName = newName.trim();
+  if(!newName) return;
+  const oldName = state.techCategories[i];
+  if(oldName === newName) return;
+  state.techCategories[i] = newName;
+  state.techNotes.forEach(n=>{ if(n.category===oldName) n.category = newName; });
+  markDirty();
+}
+function toggleNoteFormOpen(){ notesFormOpen = !notesFormOpen; render(); }
+function toggleNoteCategoryMgmtOpen(){ notesCategoryMgmtOpen = !notesCategoryMgmtOpen; render(); }
 async function addNoteImages(input){
   const files = [...input.files];
   for(const f of files){
@@ -2283,7 +2319,7 @@ function exportExcel(){
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ledgerRows), '股票資金異動');
 
   const dataRows = state.marketData.map(d=>({
-    日期:d.date, 盤別:d.session, 正逆價差:d.spread, 矛盾累積:d.contra, VIX:d.vix, 外資淨口數:d.foreign, 收盤:d.close, 振幅:d.range
+    日期:d.date, 盤別:d.session, 正逆價差:d.spread, VIX:d.vix, 外資淨口數:d.foreign, 收盤:d.close, 振幅:d.range
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dataRows), '市場數據');
 
