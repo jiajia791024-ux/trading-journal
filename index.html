@@ -131,7 +131,7 @@
   <div class="headrow">
     <h1 id="appTitle">📓 台指交易日誌</h1>
     <div style="display:flex;align-items:center;gap:10px;">
-      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.17</span></div>
+      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.18</span></div>
       <span id="settingsGear" style="cursor:pointer;font-size:18px;" onclick="openSettings()">⚙</span>
     </div>
   </div>
@@ -370,9 +370,11 @@ function render(){
 }
 
 /* ---------------- 數據 tab ---------------- */
+let dataHistoryDate = '';
 function renderData(){
   const list = [...state.marketData].sort((a,b)=>b.date.localeCompare(a.date)||b.session.localeCompare(a.session));
   const latest = list[0];
+  const shown = limitedHistory(list, dataHistoryDate);
   return `
   <div class="card">
     <h2>新增市場數據</h2>
@@ -415,7 +417,8 @@ function renderData(){
 
   <div class="card">
     <h2>歷史紀錄</h2>
-    ${list.length? list.map(d=>`
+    ${dateJumpPicker(list, dataHistoryDate, 'setDataHistoryDate')}
+    ${shown.length? shown.map(d=>`
       <div class="entry">
         <div class="entry-top"><span>${d.date} · ${d.session}</span><span class="del-x" onclick="delItem('marketData','${d.id}', this)">✕</span></div>
         <div class="kv"><span>正逆價差</span><span class="v">${fmt(d.spread)}</span></div>
@@ -425,6 +428,7 @@ function renderData(){
     `).join('') : '<div class="empty">尚無資料</div>'}
   </div>`;
 }
+function setDataHistoryDate(v){ dataHistoryDate = v; render(); }
 function fmt(v){ return (v===undefined||v===null||v==='') ? '—' : v; }
 function saveMarketData(){
   const g=id=>document.getElementById(id).value;
@@ -440,8 +444,10 @@ function num(v){ return v===''?null:Number(v); }
 
 /* ---------------- 市場情緒 tab ---------------- */
 let editingSentimentId = null;
+let sentimentHistoryDate = '';
 function renderSentiment(){
   const list=[...state.sentiment].sort((a,b)=>b.date.localeCompare(a.date));
+  const shown = limitedHistory(list, sentimentHistoryDate);
   const editing = editingSentimentId ? state.sentiment.find(s=>s.id===editingSentimentId) : null;
   const ev = editing || { date: todayStr(), note: '' };
   return `
@@ -460,7 +466,8 @@ function renderSentiment(){
   </div>
   <div class="card">
     <h2>歷史筆記</h2>
-    ${list.length? list.map(s=>`
+    ${dateJumpPicker(list, sentimentHistoryDate, 'setSentimentHistoryDate')}
+    ${shown.length? shown.map(s=>`
       <div class="entry">
         <div class="entry-top"><span>${s.date}</span><span class="del-x" onclick="delItem('sentiment','${s.id}', this)">✕</span></div>
         <div class="entry-note">${renderNoteText(s.note)}</div>
@@ -468,6 +475,7 @@ function renderSentiment(){
       </div>`).join('') : '<div class="empty">尚無筆記</div>'}
   </div>`;
 }
+function setSentimentHistoryDate(v){ sentimentHistoryDate = v; render(); }
 function saveSentiment(){
   const note = document.getElementById('s_note').value.trim();
   if(!note){ toast('請輸入內容'); return; }
@@ -513,8 +521,10 @@ function syncPlanDraft(){
   const noteEl = document.getElementById('p_note');
   if(noteEl) planDraft.note = noteEl.value;
 }
+let planHistoryDate = '';
 function renderPlan(){
   const list=[...state.plans].sort((a,b)=>b.date.localeCompare(a.date)||b.session.localeCompare(a.session));
+  const shown = limitedHistory(list, planHistoryDate);
   return `
   <div class="card">
     <h2>今日盤前規劃</h2>
@@ -563,7 +573,8 @@ function renderPlan(){
   </div>
   <div class="card">
     <h2>歷史規劃</h2>
-    ${list.length? list.map(p=>`
+    ${dateJumpPicker(list, planHistoryDate, 'setPlanHistoryDate')}
+    ${shown.length? shown.map(p=>`
       <div class="entry">
         <div class="entry-top"><span>${p.date} · ${p.session}</span><span class="del-x" onclick="delItem('plans','${p.id}', this)">✕</span></div>
         <div>${(p.directions||[]).map(d=>`<span class="pill">${d}</span>`).join(' ')} ${p.pattern?`<span class="pill">${p.pattern}</span>`:''}</div>
@@ -608,10 +619,11 @@ function renderPlan(){
       </div>`).join('') : '<div class="empty">尚無規劃</div>'}
   </div>`;
 }
-function addUpLevel(){ syncPlanDraft(); syncUpLevels(); planUpLevels.push({price:'',note:''}); render(); }
-function removeUpLevel(i){ syncPlanDraft(); syncUpLevels(); planUpLevels.splice(i,1); render(); }
-function addDownLevel(){ syncPlanDraft(); syncDownLevels(); planDownLevels.push({price:'',note:''}); render(); }
-function removeDownLevel(i){ syncPlanDraft(); syncDownLevels(); planDownLevels.splice(i,1); render(); }
+function setPlanHistoryDate(v){ planHistoryDate = v; render(); }
+function addUpLevel(){ syncPlanDraft(); syncUpLevels(); syncDownLevels(); planUpLevels.push({price:'',note:''}); render(); }
+function removeUpLevel(i){ syncPlanDraft(); syncUpLevels(); syncDownLevels(); planUpLevels.splice(i,1); render(); }
+function addDownLevel(){ syncPlanDraft(); syncUpLevels(); syncDownLevels(); planDownLevels.push({price:'',note:''}); render(); }
+function removeDownLevel(i){ syncPlanDraft(); syncUpLevels(); syncDownLevels(); planDownLevels.splice(i,1); render(); }
 function syncUpLevels(){
   planUpLevels = planUpLevels.map((_,i)=>({
     price: document.getElementById('up_price_'+i)?.value ?? '',
@@ -848,6 +860,7 @@ function tradeNetAmount(t){
 let editingTradeId = null;
 
 let futuresDateFrom = '';
+let futuresHistoryDate = '';
 let futuresDateTo = '';
 function isTradeOpen(t){
   return !((t.exits||[]).reduce((s,e)=>s+(e.qty||0),0) > 0);
@@ -1041,7 +1054,8 @@ function renderLog(){
   <div class="card">
     <h2 style="cursor:pointer;" onclick="toggleFuturesList()">交易紀錄 <span style="color:var(--gold);font-size:12px;">${futuresListOpen?'▲ 收合':'▼ 展開'}</span></h2>
     ${futuresListOpen? `
-    ${list.length? list.map(t=>{
+    ${dateJumpPicker(list, futuresHistoryDate, 'setFuturesHistoryDate')}
+    ${(()=>{ const shown = limitedHistory(list, futuresHistoryDate); return shown.length? shown.map(t=>{
       const open = isTradeOpen(t);
       const p = tradePoints(t);
       const net = tradeNetAmount(t);
@@ -1063,10 +1077,11 @@ function renderLog(){
           <span class="del-x" onclick="delItem('trades','${t.id}', this)">刪除 ✕</span>
         </div>
       </div>`;
-    }).join('') : '<div class="empty">尚無交易紀錄</div>'}
+    }).join('') : '<div class="empty">尚無交易紀錄</div>'; })()}
     ` : ''}
   </div>`;
 }
+function setFuturesHistoryDate(v){ futuresHistoryDate = v; render(); }
 function editTrade(id){
   editingTradeId = id;
   activeTab = 'log';
@@ -2391,6 +2406,23 @@ function delItem(coll, id, el){
     markDirty();
     toast('已刪除');
   }
+}
+function historyDates(list){
+  return [...new Set(list.map(e=>e.date))].filter(Boolean).sort((a,b)=>b.localeCompare(a));
+}
+function limitedHistory(list, dateFilter){
+  if(dateFilter) return list.filter(e=>e.date===dateFilter);
+  return list.slice(0,3);
+}
+function dateJumpPicker(list, currentValue, onChangeFnName){
+  const dates = historyDates(list);
+  if(!dates.length) return '';
+  return `<div class="field"><label>選擇日期查看</label>
+    <select onchange="${onChangeFnName}(this.value)">
+      <option value="">最近 3 筆</option>
+      ${dates.map(d=>`<option value="${d}" ${currentValue===d?'selected':''}>${d}</option>`).join('')}
+    </select>
+  </div>`;
 }
 function escapeHtml(s){
   return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
