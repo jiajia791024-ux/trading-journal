@@ -131,7 +131,7 @@
   <div class="headrow">
     <h1 id="appTitle">📓 台指交易日誌</h1>
     <div style="display:flex;align-items:center;gap:10px;">
-      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.21</span></div>
+      <div class="ticker"><span id="syncDot" class="sync-dot"></span><span id="syncText">未同步</span> <span style="opacity:.4;">v2.22</span></div>
       <span id="settingsGear" style="cursor:pointer;font-size:18px;" onclick="openSettings()">⚙</span>
     </div>
   </div>
@@ -234,13 +234,30 @@ function ghConfigured(){
 
 async function ghGet(){
   const s = state.settings;
-  const url = `https://api.github.com/repos/${s.owner}/${s.repo}/contents/${encodeURIComponent(s.path)}?ref=${encodeURIComponent(s.branch||'main')}`;
-  const res = await fetch(url, { headers:{ 'Authorization':'token '+s.token, 'Accept':'application/vnd.github+json' }});
-  if(res.status === 404) return null;
-  if(!res.ok) throw new Error('讀取失敗 '+res.status);
-  const json = await res.json();
-  const content = decodeURIComponent(escape(atob(json.content.replace(/\n/g,''))));
-  return { data: JSON.parse(content), sha: json.sha };
+  const headers = { 'Authorization':'token '+s.token, 'Accept':'application/vnd.github+json' };
+  // 走 Git Data API（tree + blob），避開 Contents API 讀取大檔案（>1MB）會截斷失敗的限制
+  const refRes = await fetch(`https://api.github.com/repos/${s.owner}/${s.repo}/git/ref/heads/${encodeURIComponent(s.branch||'main')}`, { headers });
+  if(refRes.status === 404) return null; // repo 還沒有任何 commit
+  if(!refRes.ok) throw new Error('讀取分支失敗 '+refRes.status);
+  const refJson = await refRes.json();
+  const commitSha = refJson.object.sha;
+
+  const commitRes = await fetch(`https://api.github.com/repos/${s.owner}/${s.repo}/git/commits/${commitSha}`, { headers });
+  if(!commitRes.ok) throw new Error('讀取 commit 失敗 '+commitRes.status);
+  const commitJson = await commitRes.json();
+  const treeSha = commitJson.tree.sha;
+
+  const treeRes = await fetch(`https://api.github.com/repos/${s.owner}/${s.repo}/git/trees/${treeSha}?recursive=1`, { headers });
+  if(!treeRes.ok) throw new Error('讀取檔案列表失敗 '+treeRes.status);
+  const treeJson = await treeRes.json();
+  const fileEntry = (treeJson.tree||[]).find(e=>e.path === s.path);
+  if(!fileEntry) return null; // 檔案還不存在
+
+  const blobRes = await fetch(`https://api.github.com/repos/${s.owner}/${s.repo}/git/blobs/${fileEntry.sha}`, { headers });
+  if(!blobRes.ok) throw new Error('讀取內容失敗 '+blobRes.status);
+  const blobJson = await blobRes.json();
+  const content = decodeURIComponent(escape(atob(blobJson.content.replace(/\n/g,''))));
+  return { data: JSON.parse(content), sha: fileEntry.sha };
 }
 
 async function ghPut(dataObj, sha){
@@ -298,6 +315,10 @@ async function pushToGithub(retrying){
   try{
     const payload = { ...state };
     delete payload.settings; // never store token in the synced file
+    const sizeBytes = new Blob([JSON.stringify(payload)]).size;
+    if(sizeBytes > 5*1024*1024 && !retrying){
+      alert('提醒：你的資料檔已經超過 5MB（主要是筆記/規劃/複盤裡附的圖片），同步可能會變慢或失敗。建議之後圖片盡量壓縮小一點、少放幾張。這次還是會照常嘗試同步。');
+    }
     const sha = await ghPut(payload, state.meta.sha);
     state.meta.sha = sha;
     saveLocal();
